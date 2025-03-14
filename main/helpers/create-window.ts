@@ -1,10 +1,6 @@
-import {
-  screen,
-  BrowserWindow,
-  BrowserWindowConstructorOptions,
-  Rectangle,
-} from "electron";
+import { screen, BrowserWindow, BrowserWindowConstructorOptions, Rectangle, nativeImage, ipcMain } from "electron";
 import Store from "electron-store";
+import path from 'path';
 
 export const createWindow = (
   windowName: string,
@@ -79,6 +75,45 @@ export const createWindow = (
       ...options.webPreferences,
     },
   });
+
+  const updateWindow = (isPlaying, artistName, songName) => {
+    if (artistName && songName) {
+      win.setTitle(`${artistName} - ${songName}`);
+    } else {
+      win.setTitle('Wora');
+    }
+
+    win.setThumbarButtons([
+      {
+        tooltip: 'Previous',
+        icon: nativeImage.createFromPath('resources/start.png'),
+        click: () => {
+          win.webContents.send('media-control', 'previous');
+        }
+      },
+      {
+        tooltip: isPlaying ? 'Pause' : 'Play',
+        icon: nativeImage.createFromPath(isPlaying ? 'resources/pause.png' : 'resources/play.png'),
+        click: () => {
+          win.webContents.send('media-control', 'play-pause');
+        }
+      },
+      {
+        tooltip: 'Next',
+        icon: nativeImage.createFromPath('resources/end.png'),
+        click: () => {
+          win.webContents.send('media-control', 'next');
+        }
+      }
+    ]);
+  };
+
+  updateWindow(false, null, null);
+
+  ipcMain.on('update-window', (event, [isPlaying, artistName, songName]) => {
+    updateWindow(isPlaying, artistName, songName);
+  });
+
 
   win.on("close", saveState);
 
