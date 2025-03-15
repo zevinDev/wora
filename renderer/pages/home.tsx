@@ -6,7 +6,7 @@ import {
   CarouselNext,
   CarouselPrevious,
 } from "@/components/ui/carousel";
-import AlbumCard from "@/components/ui/album";
+import { AlbumCard } from "@/components/ui/album";
 import Songs from "@/components/ui/songs";
 
 export default function Home() {

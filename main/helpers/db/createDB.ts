@@ -19,7 +19,9 @@ export const initDatabase = async () => {
         name TEXT,
         artist TEXT,
         year INTEGER,
-        cover TEXT
+        cover TEXT,
+        songCOunt INTEGER,
+        duration INTEGER
       );
       CREATE TABLE IF NOT EXISTS songs (
         id INTEGER PRIMARY KEY,
