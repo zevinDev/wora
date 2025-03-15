@@ -18,7 +18,7 @@ export default function App({ Component, pageProps }) {
       disableTransitionOnChange
       enableSystem
     >
-      <main className="select-none antialiased bg-white dark:bg-black text-black dark:text-white text-xs">
+      <main className="select-none bg-white text-xs text-black antialiased dark:bg-black dark:text-white">
         <div className="draggable-region"></div>
         {["/setup"].includes(router.pathname) ? (
           <Component {...pageProps} />

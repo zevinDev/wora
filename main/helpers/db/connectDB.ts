@@ -6,16 +6,29 @@ import path from "path";
 import { BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
 import { sqlite } from "./createDB";
-import { app } from 'electron';
+import { app } from "electron";
 
 const db: BetterSQLite3Database<typeof schema> = drizzle(sqlite, { schema });
 
-const APP_DATA = app.getPath('userData');
-const ART_DIR = path.join(APP_DATA, 'utilities/uploads/covers');
+const APP_DATA = app.getPath("userData");
+const ART_DIR = path.join(APP_DATA, "utilities/uploads/covers");
 
 const audioExtensions = [
-  ".mp3", ".mpeg", ".opus", ".ogg", ".oga", ".wav", ".aac",
-  ".caf", ".m4a", ".m4b", ".mp4", ".weba", ".webm", ".dolby", ".flac"
+  ".mp3",
+  ".mpeg",
+  ".opus",
+  ".ogg",
+  ".oga",
+  ".wav",
+  ".aac",
+  ".caf",
+  ".m4a",
+  ".m4b",
+  ".mp4",
+  ".weba",
+  ".webm",
+  ".dolby",
+  ".flac",
 ];
 
 const imageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"];
@@ -25,7 +38,10 @@ function findFirstImageInDirectory(dir: string): string | null {
   for (const file of files) {
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
-    if (stat.isFile() && imageExtensions.includes(path.extname(file).toLowerCase())) {
+    if (
+      stat.isFile() &&
+      imageExtensions.includes(path.extname(file).toLowerCase())
+    ) {
       return filePath;
     }
   }
@@ -50,7 +66,9 @@ function readFilesRecursively(dir: string): string[] {
 export const getLibraryStats = async () => {
   const songCount = await db.select({ count: sql`count(*)` }).from(songs);
   const albumCount = await db.select({ count: sql`count(*)` }).from(albums);
-  const playlistCount = await db.select({ count: sql`count(*)` }).from(playlists);
+  const playlistCount = await db
+    .select({ count: sql`count(*)` })
+    .from(playlists);
 
   return {
     songs: songCount[0].count,
@@ -197,7 +215,10 @@ export const isSongFavorite = async (file: string) => {
   if (!song) return false;
 
   const isFavourite = await db.query.playlistSongs.findFirst({
-    where: and(eq(playlistSongs.playlistId, 1), eq(playlistSongs.songId, song.id)),
+    where: and(
+      eq(playlistSongs.playlistId, 1),
+      eq(playlistSongs.songId, song.id),
+    ),
   });
 
   return !!isFavourite;
@@ -207,7 +228,9 @@ export const addToFavourites = async (songId: number) => {
   const existingEntry = await db
     .select()
     .from(playlistSongs)
-    .where(and(eq(playlistSongs.playlistId, 1), eq(playlistSongs.songId, songId)));
+    .where(
+      and(eq(playlistSongs.playlistId, 1), eq(playlistSongs.songId, songId)),
+    );
 
   if (!existingEntry[0]) {
     await db.insert(playlistSongs).values({
@@ -217,7 +240,9 @@ export const addToFavourites = async (songId: number) => {
   } else {
     await db
       .delete(playlistSongs)
-      .where(and(eq(playlistSongs.playlistId, 1), eq(playlistSongs.songId, songId)));
+      .where(
+        and(eq(playlistSongs.playlistId, 1), eq(playlistSongs.songId, songId)),
+      );
   }
 };
 
@@ -252,7 +277,10 @@ export const searchDB = async (query: string) => {
 
 export const addSongToPlaylist = async (playlistId: number, songId: number) => {
   const checkIfExists = await db.query.playlistSongs.findFirst({
-    where: and(eq(playlistSongs.playlistId, playlistId), eq(playlistSongs.songId, songId)),
+    where: and(
+      eq(playlistSongs.playlistId, playlistId),
+      eq(playlistSongs.songId, songId),
+    ),
   });
 
   if (checkIfExists) return false;
@@ -265,10 +293,18 @@ export const addSongToPlaylist = async (playlistId: number, songId: number) => {
   return true;
 };
 
-export const removeSongFromPlaylist = async (playlistId: number, songId: number) => {
+export const removeSongFromPlaylist = async (
+  playlistId: number,
+  songId: number,
+) => {
   await db
     .delete(playlistSongs)
-    .where(and(eq(playlistSongs.playlistId, playlistId), eq(playlistSongs.songId, songId)));
+    .where(
+      and(
+        eq(playlistSongs.playlistId, playlistId),
+        eq(playlistSongs.songId, songId),
+      ),
+    );
 
   return true;
 };
@@ -297,7 +333,7 @@ export const initializeData = async (musicFolder: string) => {
   const dbFiles = await db.select().from(songs);
 
   const deletedFiles = dbFiles.filter(
-    (dbFile) => !currentFiles.includes(dbFile.filePath)
+    (dbFile) => !currentFiles.includes(dbFile.filePath),
   );
 
   if (deletedFiles.length > 0) {
@@ -323,7 +359,10 @@ export const initializeData = async (musicFolder: string) => {
     if (albumImage) {
       const imageData = fs.readFileSync(albumImage);
       const imageExt = path.extname(albumImage).slice(1);
-      const hash = require('crypto').createHash('md5').update(imageData).digest('hex');
+      const hash = require("crypto")
+        .createHash("md5")
+        .update(imageData)
+        .digest("hex");
       artPath = path.join(ART_DIR, `${hash}.${imageExt}`);
 
       if (!fs.existsSync(artPath)) {
@@ -334,8 +373,11 @@ export const initializeData = async (musicFolder: string) => {
       const cover = selectCover(metadata.common.picture);
 
       if (cover) {
-        const hash = require('crypto').createHash('md5').update(cover.data).digest('hex');
-        artPath = path.join(ART_DIR, `${hash}.${cover.format.split('/')[1]}`);
+        const hash = require("crypto")
+          .createHash("md5")
+          .update(cover.data)
+          .digest("hex");
+        artPath = path.join(ART_DIR, `${hash}.${cover.format.split("/")[1]}`);
 
         if (!fs.existsSync(artPath)) {
           await fs.promises.mkdir(ART_DIR, { recursive: true });
@@ -362,8 +404,8 @@ export const initializeData = async (musicFolder: string) => {
             "Various Artists",
           year: metadata.common.year,
           cover: artPath,
-          songCount: metadata.common.track.no,
-          duration: Math.round(metadata.format.duration)
+          songCount: 0,
+          duration: 0,
         })
         .returning();
 
@@ -372,7 +414,7 @@ export const initializeData = async (musicFolder: string) => {
       // @hiaaryan: Update Album if Artist or Cover is different
       if (
         album.artist !==
-        (metadata.common.albumartist || metadata.common.artist) ||
+          (metadata.common.albumartist || metadata.common.artist) ||
         album.year !== metadata.common.year ||
         album.cover !== artPath
       ) {
@@ -385,8 +427,8 @@ export const initializeData = async (musicFolder: string) => {
               "Various Artists",
             year: metadata.common.year,
             cover: artPath,
-            songCount: metadata.common.track.no,
-            duration: Math.round(metadata.format.duration)
+            songCount: 0,
+            duration: 0,
           })
           .where(eq(albums.id, album.id));
       }
@@ -431,10 +473,15 @@ export const initializeData = async (musicFolder: string) => {
 
     if (songsInAlbum.length === 0) {
       await db.delete(albums).where(eq(albums.id, album.id));
-    } else{
+    } else {
+      const totalDuration = songsInAlbum.reduce(
+        (acc, song) => acc + song.duration,
+        0,
+      );
+      const averageDuration = Math.round(totalDuration / 60);
       await db
         .update(albums)
-        .set({ songCount: songsInAlbum.length })
+        .set({ songCount: songsInAlbum.length, duration: averageDuration })
         .where(eq(albums.id, album.id));
     }
   }
@@ -460,10 +507,7 @@ export const initializeData = async (musicFolder: string) => {
     .where(eq(settings.id, 1));
 
   if (existingSettings[0]) {
-    await db
-      .update(settings)
-      .set({ musicFolder })
-      .where(eq(settings.id, 1));
+    await db.update(settings).set({ musicFolder }).where(eq(settings.id, 1));
   } else {
     await db.insert(settings).values({ musicFolder });
   }
