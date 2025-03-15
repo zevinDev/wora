@@ -362,6 +362,8 @@ export const initializeData = async (musicFolder: string) => {
             "Various Artists",
           year: metadata.common.year,
           cover: artPath,
+          songCount: metadata.common.track.no,
+          duration: Math.round(metadata.format.duration)
         })
         .returning();
 
@@ -383,6 +385,8 @@ export const initializeData = async (musicFolder: string) => {
               "Various Artists",
             year: metadata.common.year,
             cover: artPath,
+            songCount: metadata.common.track.no,
+            duration: Math.round(metadata.format.duration)
           })
           .where(eq(albums.id, album.id));
       }
@@ -427,6 +431,11 @@ export const initializeData = async (musicFolder: string) => {
 
     if (songsInAlbum.length === 0) {
       await db.delete(albums).where(eq(albums.id, album.id));
+    } else{
+      await db
+        .update(albums)
+        .set({ songCount: songsInAlbum.length })
+        .where(eq(albums.id, album.id));
     }
   }
 
