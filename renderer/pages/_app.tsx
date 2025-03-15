@@ -19,6 +19,7 @@ export default function App({ Component, pageProps }) {
       enableSystem
     >
       <main className="select-none antialiased bg-white dark:bg-black text-black dark:text-white text-xs">
+        <div className="draggable-region"></div>
         {["/setup"].includes(router.pathname) ? (
           <Component {...pageProps} />
         ) : (

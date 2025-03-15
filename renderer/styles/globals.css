@@ -27,6 +27,21 @@
     scrollbar-width: none; /* Firefox */
 }
 
+.draggable-region {
+    -webkit-app-region: drag;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(100% - 90px); /* 90px is the aprox width of the buttons */
+    height: 30px;
+    background: #00000000;
+    z-index: 1000;
+  }
+
+.non-draggable {
+    -webkit-app-region: no-drag;
+}
+
 html {
     overscroll-behavior: none;
 }
