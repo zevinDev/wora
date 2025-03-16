@@ -39,7 +39,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { convertTime, isSyncedLyrics, parseLyrics, updateDiscordState, useAudioMetadata } from "@/lib/helpers";
+import {
+  convertTime,
+  isSyncedLyrics,
+  parseLyrics,
+  updateDiscordState,
+  useAudioMetadata,
+} from "@/lib/helpers";
 import { usePlayer } from "@/context/playerContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
@@ -104,7 +110,7 @@ export const Player = () => {
         setSeekPosition(0);
         setIsPlaying(true);
         updateDiscordState(1, song);
-        window.ipc.send('update-window', [true, song?.artist, song?.name]);
+        window.ipc.send("update-window", [true, song?.artist, song?.name]);
       },
       onloaderror: (error) => {
         setIsPlaying(false);
@@ -112,7 +118,7 @@ export const Player = () => {
       },
       onend: () => {
         setIsPlaying(false);
-        window.ipc.send('update-window', [false, null, null]);
+        window.ipc.send("update-window", [false, null, null]);
         if (!repeat) {
           nextSong();
         }
@@ -139,12 +145,12 @@ export const Player = () => {
 
     soundRef.current.on("play", () => {
       setIsPlaying(true);
-      window.ipc.send('update-window', [true, song?.artist, song?.name]);
+      window.ipc.send("update-window", [true, song?.artist, song?.name]);
     });
 
     soundRef.current.on("pause", () => {
       setIsPlaying(false);
-      window.ipc.send('update-window', [false, false, false]);
+      window.ipc.send("update-window", [false, false, false]);
     });
 
     return () => {
@@ -262,47 +268,77 @@ export const Player = () => {
   };
 
   useEffect(() => {
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: song?.name || 'Unknown Title',
-        artist: song?.artist || 'Unknown Artist',
-        album: song?.album?.name || 'Unknown Album',
-        artwork: [
-          { src: `wora://${song?.album.cover}`}
-        ]
-      });
+    const updateMediaSessionMetadata = async () => {
+      if ("mediaSession" in navigator && song) {
+        const toDataURL = (
+          url: string,
+          callback: (dataUrl: string) => void,
+        ) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = () => {
+            const reader = new FileReader();
+            reader.onloadend = () => callback(reader.result as string);
+            reader.readAsDataURL(xhr.response);
+          };
+          xhr.open("GET", url);
+          xhr.responseType = "blob";
+          xhr.send();
+        };
 
-      navigator.mediaSession.setActionHandler('play', handlePlayPause);
-      navigator.mediaSession.setActionHandler('pause', handlePlayPause);
-      navigator.mediaSession.setActionHandler('previoustrack', previousSong);
-      navigator.mediaSession.setActionHandler('nexttrack', nextSong);
-      navigator.mediaSession.setActionHandler('seekbackward', () => {
-        if (soundRef.current) {
-          soundRef.current.seek(Math.max(0, soundRef.current.seek() - 10));
-        }
-      });
-      navigator.mediaSession.setActionHandler('seekforward', () => {
-        if (soundRef.current) {
-          soundRef.current.seek(Math.min(soundRef.current.duration(), soundRef.current.seek() + 10));
-        }
-      });
-    }
+        toDataURL(`wora://${song?.album.cover}`, (dataUrl) => {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: song?.name || "Unknown Title",
+            artist: song?.artist || "Unknown Artist",
+            album: song?.album?.name || "Unknown Album",
+            artwork: [{ src: dataUrl }],
+          });
 
-    const removeMediaControlListener = window.ipc.on('media-control', (command) => {
-      switch (command) {
-        case 'play-pause':
-          handlePlayPause();
-          break;
-        case 'previous':
-          previousSong();
-          break;
-        case 'next':
-          nextSong();
-          break;
-        default:
-          break;
+          navigator.mediaSession.setActionHandler("play", handlePlayPause);
+          navigator.mediaSession.setActionHandler("pause", handlePlayPause);
+          navigator.mediaSession.setActionHandler(
+            "previoustrack",
+            previousSong,
+          );
+          navigator.mediaSession.setActionHandler("nexttrack", nextSong);
+          navigator.mediaSession.setActionHandler("seekbackward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(Math.max(0, soundRef.current.seek() - 10));
+            }
+          });
+          navigator.mediaSession.setActionHandler("seekforward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(
+                Math.min(
+                  soundRef.current.duration(),
+                  soundRef.current.seek() + 10,
+                ),
+              );
+            }
+          });
+        });
       }
-    });
+    };
+
+    updateMediaSessionMetadata();
+
+    const removeMediaControlListener = window.ipc.on(
+      "media-control",
+      (command) => {
+        switch (command) {
+          case "play-pause":
+            handlePlayPause();
+            break;
+          case "previous":
+            previousSong();
+            break;
+          case "next":
+            nextSong();
+            break;
+          default:
+            break;
+        }
+      },
+    );
 
     return () => {
       removeMediaControlListener();
@@ -404,10 +440,10 @@ export const Player = () => {
           </div>
         )}
       </div>
-      <div className="w-full h-28 rounded-2xl wora-border overflow-hidden p-6">
+      <div className="wora-border h-28 w-full overflow-hidden rounded-2xl p-6">
         <div className="relative flex h-full w-full items-center">
           <TooltipProvider>
-            <div className="absolute left-0 flex justify-start w-1/4 overflow-hidden gradient-mask-r-70 items-center gap-4">
+            <div className="absolute left-0 flex w-1/4 items-center justify-start gap-4 overflow-hidden gradient-mask-r-70">
               {song ? (
                 <ContextMenu>
                   <ContextMenuTrigger>
@@ -474,8 +510,8 @@ export const Player = () => {
               </div>
             </div>
 
-            <div className="absolute left-0 right-0 mx-auto flex h-full w-2/4 flex-col gap-4 items-center justify-between">
-              <div className="flex items-center w-full gap-8 justify-center h-full">
+            <div className="absolute left-0 right-0 mx-auto flex h-full w-2/4 flex-col items-center justify-between gap-4">
+              <div className="flex h-full w-full items-center justify-center gap-8">
                 <Button
                   variant="ghost"
                   asChild
@@ -591,7 +627,7 @@ export const Player = () => {
                   </Tooltip>
                 </div>
               </div>
-              <div className="relative h-full items-center flex w-96 px-4">
+              <div className="relative flex h-full w-96 items-center px-4">
                 <p className="absolute -left-8">
                   {convertTime(soundRef.current?.seek() || 0)}
                 </p>
@@ -642,7 +678,11 @@ export const Player = () => {
                     <IconMessage stroke={2} size={15} />
                   </Button>
                 ) : (
-                  <IconMessage className="text-red-500 opacity-75 cursor-not-allowed" stroke={2} size={15} />
+                  <IconMessage
+                    className="cursor-not-allowed text-red-500 opacity-75"
+                    stroke={2}
+                    size={15}
+                  />
                 )}
                 <Dialog>
                   {song ? (
@@ -650,7 +690,11 @@ export const Player = () => {
                       <IconInfoCircle stroke={2} size={15} />
                     </DialogTrigger>
                   ) : (
-                    <IconInfoCircle className="text-red-500 opacity-75 cursor-not-allowed" stroke={2} size={15} />
+                    <IconInfoCircle
+                      className="cursor-not-allowed text-red-500 opacity-75"
+                      stroke={2}
+                      size={15}
+                    />
                   )}
                   <DialogContent>
                     <div className="flex h-full w-full items-start gap-6 overflow-hidden gradient-mask-r-70">
@@ -666,7 +710,10 @@ export const Player = () => {
                             <div className="relative h-36 w-36 overflow-hidden rounded-xl">
                               <Image
                                 alt="album"
-                                src={`wora://${song?.album.cover}` || "/coverArt.png"}
+                                src={
+                                  `wora://${song?.album.cover}` ||
+                                  "/coverArt.png"
+                                }
                                 fill
                                 className="object-cover"
                                 quality={25}
