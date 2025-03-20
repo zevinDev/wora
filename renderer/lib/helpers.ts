@@ -23,23 +23,23 @@ export const convertTime = (seconds: number) => {
 
 async function fetchCover(artist: string, album: string) {
   const queryTerms = [
-    !artist || artist === 'Various Artist'
-      ? ''
+    !artist || artist === "Various Artist"
+      ? ""
       : `artist:"${artist.replace(/"/g, '\\"')}"`,
-    !album || album === 'Unknown Album' || album === ''
-      ? ''
-      : `release:"${album.replace(/"/g, '\\"')}"`
+    !album || album === "Unknown Album" || album === ""
+      ? ""
+      : `release:"${album.replace(/"/g, '\\"')}"`,
   ];
 
-  const query = queryTerms.join(' ').trim();
+  const query = queryTerms.join(" ").trim();
 
   try {
-    const response = await axios.get('https://musicbrainz.org/ws/2/release', {
+    const response = await axios.get("https://musicbrainz.org/ws/2/release", {
       params: {
-        fmt: 'json',
-        limit: '3',
-        query
-      }
+        fmt: "json",
+        limit: "3",
+        query,
+      },
     });
 
     for (const release of response.data.releases) {
@@ -162,7 +162,7 @@ export const updateDiscordState = async (seek: number, song: Song) => {
   if (!song) return;
 
   const details = song.name;
-  const state = (song.artist).split(/[,&(]/)[0].trim();;
+  const state = song.artist.split(/[,&(]/)[0].trim();
   const duration = song.duration;
 
   const cover = await fetchCover(song.album.artist, song.album.name);
@@ -172,6 +172,42 @@ export const updateDiscordState = async (seek: number, song: Song) => {
 
 export const resetDiscordState = (): void => {
   window.ipc.send("set-rpc-state", defaultState);
+};
+
+export const lastFMCurrentlyPlaying = async (song: Song) => {
+  if (!song) return;
+
+  const artist = song.artist;
+  const track = song.name;
+  const album = song.album.name;
+  const duration = song.duration;
+
+  window.ipc.send("lastFM-Request", {
+    artist: artist,
+    track: track,
+    album: album,
+    duration: duration,
+    method: "track.updateNowPlaying",
+  });
+};
+
+export const lastFMScrobble = async (song: Song) => {
+  if (!song) return;
+
+  const artist = song.artist;
+  const track = song.name;
+  const album = song.album.name;
+  const duration = song.duration;
+  const timestamp = Math.floor(Date.now() / 1000) - duration;
+
+  window.ipc.send("lastFM-Request", {
+    artist: artist,
+    track: track,
+    album: album,
+    duration: duration,
+    timestamp: timestamp,
+    method: "track.scrobble",
+  });
 };
 
 export const useAudioMetadata = (file: string) => {
