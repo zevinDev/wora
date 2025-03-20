@@ -14,7 +14,6 @@ import { BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
 import { sqlite } from "./createDB";
 import { app } from "electron";
-import { profile } from "console";
 
 const db: BetterSQLite3Database<typeof schema> = drizzle(sqlite, { schema });
 
@@ -436,6 +435,8 @@ export const initializeData = async (musicFolder: string) => {
             "Various Artists",
           year: metadata.common.year,
           cover: artPath,
+          songCount: 0,
+          duration: 0,
         })
         .returning();
 
@@ -457,6 +458,8 @@ export const initializeData = async (musicFolder: string) => {
               "Various Artists",
             year: metadata.common.year,
             cover: artPath,
+            songCount: 0,
+            duration: 0,
           })
           .where(eq(albums.id, album.id));
       }
@@ -501,6 +504,16 @@ export const initializeData = async (musicFolder: string) => {
 
     if (songsInAlbum.length === 0) {
       await db.delete(albums).where(eq(albums.id, album.id));
+    } else {
+      const totalDuration = songsInAlbum.reduce(
+        (acc, song) => acc + song.duration,
+        0,
+      );
+      const averageDuration = Math.round(totalDuration / 60);
+      await db
+        .update(albums)
+        .set({ songCount: songsInAlbum.length, duration: averageDuration })
+        .where(eq(albums.id, album.id));
     }
   }
 

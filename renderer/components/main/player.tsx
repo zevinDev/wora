@@ -113,6 +113,7 @@ export const Player = () => {
         setIsPlaying(true);
         updateDiscordState(1, song);
         lastFMCurrentlyPlaying(song);
+        window.ipc.send("update-window", [true, song?.artist, song?.name]);
       },
       onloaderror: (error) => {
         setIsPlaying(false);
@@ -121,6 +122,7 @@ export const Player = () => {
       onend: () => {
         setIsPlaying(false);
         lastFMScrobble(song);
+        window.ipc.send("update-window", [false, null, null]);
         if (!repeat) {
           nextSong();
         }
@@ -147,10 +149,12 @@ export const Player = () => {
 
     soundRef.current.on("play", () => {
       setIsPlaying(true);
+      window.ipc.send("update-window", [true, song?.artist, song?.name]);
     });
 
     soundRef.current.on("pause", () => {
       setIsPlaying(false);
+      window.ipc.send("update-window", [false, false, false]);
     });
 
     return () => {
@@ -266,6 +270,84 @@ export const Player = () => {
         }
       });
   };
+
+  useEffect(() => {
+    const updateMediaSessionMetadata = async () => {
+      if ("mediaSession" in navigator && song) {
+        const toDataURL = (
+          url: string,
+          callback: (dataUrl: string) => void,
+        ) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = () => {
+            const reader = new FileReader();
+            reader.onloadend = () => callback(reader.result as string);
+            reader.readAsDataURL(xhr.response);
+          };
+          xhr.open("GET", url);
+          xhr.responseType = "blob";
+          xhr.send();
+        };
+
+        toDataURL(`wora://${song?.album.cover}`, (dataUrl) => {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: song?.name || "Unknown Title",
+            artist: song?.artist || "Unknown Artist",
+            album: song?.album?.name || "Unknown Album",
+            artwork: [{ src: dataUrl }],
+          });
+
+          navigator.mediaSession.setActionHandler("play", handlePlayPause);
+          navigator.mediaSession.setActionHandler("pause", handlePlayPause);
+          navigator.mediaSession.setActionHandler(
+            "previoustrack",
+            previousSong,
+          );
+          navigator.mediaSession.setActionHandler("nexttrack", nextSong);
+          navigator.mediaSession.setActionHandler("seekbackward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(Math.max(0, soundRef.current.seek() - 10));
+            }
+          });
+          navigator.mediaSession.setActionHandler("seekforward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(
+                Math.min(
+                  soundRef.current.duration(),
+                  soundRef.current.seek() + 10,
+                ),
+              );
+            }
+          });
+        });
+      }
+    };
+
+    updateMediaSessionMetadata();
+
+    const removeMediaControlListener = window.ipc.on(
+      "media-control",
+      (command) => {
+        switch (command) {
+          case "play-pause":
+            handlePlayPause();
+            break;
+          case "previous":
+            previousSong();
+            break;
+          case "next":
+            nextSong();
+            break;
+          default:
+            break;
+        }
+      },
+    );
+
+    return () => {
+      removeMediaControlListener();
+    };
+  }, [song, handlePlayPause, previousSong, nextSong]);
 
   return (
     <div>

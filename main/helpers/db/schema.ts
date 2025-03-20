@@ -14,6 +14,8 @@ export const albums = sqliteTable("albums", {
   artist: text("artist"),
   year: integer("year"),
   cover: text("cover"),
+  songCount: integer("songCount"),
+  duration: integer("duration"),
 });
 
 export const songs = sqliteTable("songs", {
