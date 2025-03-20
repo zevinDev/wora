@@ -45,6 +45,8 @@ import {
   parseLyrics,
   updateDiscordState,
   useAudioMetadata,
+  lastFMCurrentlyPlaying,
+  lastFMScrobble,
 } from "@/lib/helpers";
 import { usePlayer } from "@/context/playerContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -110,6 +112,7 @@ export const Player = () => {
         setSeekPosition(0);
         setIsPlaying(true);
         updateDiscordState(1, song);
+        lastFMCurrentlyPlaying(song);
         window.ipc.send("update-window", [true, song?.artist, song?.name]);
       },
       onloaderror: (error) => {
@@ -118,6 +121,7 @@ export const Player = () => {
       },
       onend: () => {
         setIsPlaying(false);
+        lastFMScrobble(song);
         window.ipc.send("update-window", [false, null, null]);
         if (!repeat) {
           nextSong();

@@ -65,3 +65,10 @@ export const playlistSongRelations = relations(playlistSongs, ({ one }) => ({
   }),
   song: one(songs, { fields: [playlistSongs.songId], references: [songs.id] }),
 }));
+
+export const lastFM = sqliteTable("lastFM", {
+  id: integer("id", { mode: "number" }).primaryKey({ autoIncrement: true }),
+  key: text("key"),
+  username: text("username"),
+  profilePicture: text("profilePicture"),
+});

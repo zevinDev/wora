@@ -44,5 +44,11 @@ export const initDatabase = async () => {
         FOREIGN KEY (playlistId) REFERENCES playlists(id),
         Foreign KEY (songId) REFERENCES songs(id)
       );
+      CREATE TABLE IF NOT EXISTS lastFM (
+        id INTEGER PRIMARY KEY,
+        key TEXT,
+        username TEXT,
+        profilePicture TEXT
+      );
   `);
 };

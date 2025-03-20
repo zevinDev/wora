@@ -1,5 +1,13 @@
 import path from "path";
-import { Menu, Tray, app, dialog, ipcMain, shell } from "electron";
+import {
+  Menu,
+  Tray,
+  app,
+  dialog,
+  ipcMain,
+  shell,
+  BrowserWindow,
+} from "electron";
 import serve from "electron-serve";
 import { createWindow } from "./helpers";
 import { protocol } from "electron";
@@ -20,12 +28,14 @@ import {
   searchDB,
   updatePlaylist,
   updateSettings,
+  updateLastFM,
+  getLastFM,
 } from "./helpers/db/connectDB";
 import { initDatabase } from "./helpers/db/createDB";
 import { parseFile } from "music-metadata";
 import fs from "fs";
 import { Client } from "@xhayper/discord-rpc";
-
+import axios from "axios";
 const isProd = process.env.NODE_ENV === "production";
 
 if (isProd) {
@@ -51,7 +61,7 @@ const initializeLibrary = async () => {
       await initializeData(settings.musicFolder);
     }
   } catch (error) {
-    console.error('Error initializing library:', error);
+    console.error("Error initializing library:", error);
   }
 };
 
@@ -113,43 +123,46 @@ const initializeLibrary = async () => {
 
 // @hiaaryan: Initialize Discord RPC
 const client = new Client({
-  clientId: "1243707416588320800"
+  clientId: "1243707416588320800",
 });
 
-ipcMain.on("set-rpc-state", async (_, { details, state, seek, duration, cover }) => {
-  let startTimestamp, endTimestamp;
+ipcMain.on(
+  "set-rpc-state",
+  async (_, { details, state, seek, duration, cover }) => {
+    let startTimestamp, endTimestamp;
 
-  if (duration && seek) {
-    const now = Math.ceil(Date.now());
-    startTimestamp = now - (seek * 1000);
-    endTimestamp = now + ((duration - seek) * 1000);
-  }
-
-  const setActivity = {
-    details,
-    state,
-    largeImageKey: cover,
-    instance: false,
-    type: 2,
-    startTimestamp: startTimestamp,
-    endTimestamp: endTimestamp,
-    buttons: [
-      { label: "Support Project", url: "https://github.com/hiaaryan/wora" },
-    ]
-  };
-
-  if (!client.isConnected) {
-    try {
-      await client.login();
-    } catch (error) {
-      console.error('Error logging into Discord:', error);
+    if (duration && seek) {
+      const now = Math.ceil(Date.now());
+      startTimestamp = now - seek * 1000;
+      endTimestamp = now + (duration - seek) * 1000;
     }
-  }
 
-  if (client.isConnected) {
-    client.user.setActivity(setActivity);
-  }
-});
+    const setActivity = {
+      details,
+      state,
+      largeImageKey: cover,
+      instance: false,
+      type: 2,
+      startTimestamp: startTimestamp,
+      endTimestamp: endTimestamp,
+      buttons: [
+        { label: "Support Project", url: "https://github.com/hiaaryan/wora" },
+      ],
+    };
+
+    if (!client.isConnected) {
+      try {
+        await client.login();
+      } catch (error) {
+        console.error("Error logging into Discord:", error);
+      }
+    }
+
+    if (client.isConnected) {
+      client.user.setActivity(setActivity);
+    }
+  },
+);
 
 // @hiaaryan: Called to Rescan Library
 ipcMain.handle("rescanLibrary", async () => {
@@ -294,7 +307,10 @@ ipcMain.handle("updateSettings", async (_, data: any) => {
 });
 
 ipcMain.handle("uploadProfilePicture", async (_, file) => {
-  const uploadsDir = path.join(app.getPath("userData"), "utilities/uploads/profile");
+  const uploadsDir = path.join(
+    app.getPath("userData"),
+    "utilities/uploads/profile",
+  );
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
@@ -308,7 +324,10 @@ ipcMain.handle("uploadProfilePicture", async (_, file) => {
 });
 
 ipcMain.handle("uploadPlaylistCover", async (_, file) => {
-  const uploadsDir = path.join(app.getPath("userData"), "utilities/uploads/playlists");
+  const uploadsDir = path.join(
+    app.getPath("userData"),
+    "utilities/uploads/playlists",
+  );
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
@@ -326,6 +345,126 @@ ipcMain.handle("getActionsData", async () => {
   const appVersion = app.getVersion();
 
   return { isNotMac, appVersion };
+});
+
+const API_KEY = "1c0def144788460560a7559f9bf810a5";
+
+ipcMain.handle("lastFM-Auth", async () => {
+  const authWindow = new BrowserWindow({
+    width: 800,
+    height: 600,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  const authUrl = `https://www.last.fm/api/auth/?api_key=${API_KEY}&cb=http://localhost/callback`;
+
+  authWindow.loadURL(authUrl);
+
+  return new Promise((resolve, reject) => {
+    authWindow.webContents.on("will-redirect", async (_, url) => {
+      if (url.startsWith("http://localhost/callback")) {
+        const urlParams = new URLSearchParams(url.split("?")[1]);
+        const token = urlParams.get("token");
+
+        if (token) {
+          try {
+            const sessionKey = await getSessionKey(token);
+            const lastFMData = await lastFM_Request({
+              method: "user.getInfo",
+              sk: sessionKey,
+            });
+            await updateLastFM({
+              key: sessionKey,
+              username: lastFMData.user.name,
+              profilePicture: lastFMData.user.image[2]["#text"],
+            });
+
+            authWindow.close();
+            resolve("Authentication successful!");
+          } catch (error) {
+            console.error("Error during Last.fm authentication:", error);
+            authWindow.close();
+            reject(new Error("Error during authentication."));
+          }
+        } else {
+          authWindow.close();
+          reject(new Error("Missing token in callback URL."));
+        }
+      }
+    });
+
+    authWindow.on("closed", () => {
+      reject(new Error("Authentication window closed by user."));
+    });
+  });
+});
+
+// New methods for Last.fm integration
+async function generateApiSignature(params: any): Promise<string> {
+  const response = await axios.post(
+    "https://wora-backend.vercel.app/api/generate-sig",
+    params,
+  );
+  return response.data.api_sig;
+}
+
+async function getSessionKey(token: string): Promise<string> {
+  const params = {
+    method: "auth.getSession",
+    api_key: API_KEY,
+    token: token,
+  };
+
+  params["api_sig"] = await generateApiSignature(params);
+  params["format"] = "json";
+
+  const response = await axios.get("https://ws.audioscrobbler.com/2.0/", {
+    params,
+  });
+  if (response.data && response.data.session) {
+    return response.data.session.key;
+  } else {
+    throw new Error("Failed to retrieve session key");
+  }
+}
+
+async function lastFM_Request(reqParams: object): Promise<any> {
+  const sessionKey = await getLastFM();
+  const params = {
+    api_key: API_KEY,
+    ...reqParams,
+  };
+  if (params["sk"] === undefined) {
+    params["sk"] = sessionKey[0].key;
+  }
+
+  params["api_sig"] = await generateApiSignature(params);
+  params["format"] = "json";
+
+  try {
+    const response = await axios.post(
+      "https://ws.audioscrobbler.com/2.0/",
+      null,
+      { params },
+    );
+    return response.data;
+  } catch (error) {
+    console.error("Error making Last.fm request:", error);
+    throw new Error("Failed to make Last.fm request.");
+  }
+}
+
+ipcMain.on("lastFM-Request", async (_, reqParams: object) => {
+  await lastFM_Request(reqParams);
+});
+
+ipcMain.handle("lastFM-Data", async () => getLastFM());
+
+ipcMain.handle("lastFM-Unlink", async () => {
+  await updateLastFM({ key: null, username: null, profilePicture: null });
 });
 
 app.on("window-all-closed", () => {

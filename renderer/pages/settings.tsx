@@ -1,5 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
-import { IconArrowRight, IconCheck, IconRefresh, IconX } from "@tabler/icons-react";
+import {
+  IconArrowRight,
+  IconCheck,
+  IconRefresh,
+  IconX,
+} from "@tabler/icons-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -16,6 +21,7 @@ import Spinner from "@/components/ui/spinner";
 import { Avatar, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
+import { log } from "console";
 
 const formSchema = z.object({
   name: z.string().min(2, {
@@ -30,6 +36,12 @@ type Settings = {
   musicFolder: string;
 };
 
+type LastFMData = {
+  key: string;
+  username: string;
+  profilePicture: string;
+};
+
 export default function Settings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,6 +52,7 @@ export default function Settings() {
     albums: number;
     playlists: number;
   } | null>(null);
+  const [lastFMData, setLastFMData] = useState<LastFMData | null>(null);
 
   useEffect(() => {
     window.ipc.invoke("getSettings").then((response) => {
@@ -53,6 +66,16 @@ export default function Settings() {
 
     window.ipc.invoke("getLibraryStats").then((response) => {
       setStats(response);
+    });
+
+    // Fetch LastFM data if linked
+    window.ipc.invoke("lastFM-Data").then((data) => {
+      console.log("LastFM Data Response:", data); // Debugging
+      if (data && data.length > 0 && data[0].username) {
+        setLastFMData(data[0]); // Set the first element of the array
+      } else {
+        setLastFMData(null);
+      }
     });
   }, []);
 
@@ -169,6 +192,58 @@ export default function Settings() {
       .catch(() => setMusicLoading(false));
   };
 
+  const linkLastFMAccount = () => {
+    window.ipc
+      .invoke("lastFM-Auth")
+      .then(() => {
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconCheck className="text-green-400" stroke={2} size={16} />
+            LastFM account linked successfully.
+          </div>,
+        );
+        // Refresh LastFM data after linking
+        window.ipc.invoke("lastFM-Data").then((data) => {
+          if (data && data.length > 0 && data[0].username) {
+            setLastFMData(data[0]); // Update the state with the new data
+          } else {
+            setLastFMData(null);
+          }
+        });
+      })
+      .catch(() => {
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconX className="text-red-500" stroke={2} size={16} />
+            Failed to link LastFM account.
+          </div>,
+        );
+      });
+  };
+  console.log("LastFM Data:", lastFMData); // Debugging
+
+  const unlinkLastFMAccount = () => {
+    window.ipc
+      .invoke("lastFM-Unlink")
+      .then(() => {
+        setLastFMData(null); // Clear the LastFM data
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconCheck className="text-green-400" stroke={2} size={16} />
+            LastFM account unlinked successfully.
+          </div>,
+        );
+      })
+      .catch(() => {
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconX className="text-red-500" stroke={2} size={16} />
+            Failed to unlink LastFM account.
+          </div>,
+        );
+      });
+  };
+
   useEffect(() => {
     return () => {
       if (previewUrl.startsWith("blob:")) {
@@ -186,6 +261,7 @@ export default function Settings() {
         </div>
         <div className="relative flex w-full flex-col gap-8">
           <div className="flex w-full items-center gap-8">
+            {/* Profile Picture and Name Box */}
             <div className="wora-border h-48 w-2/5 rounded-2xl p-6">
               <Form {...form}>
                 <form
@@ -238,7 +314,7 @@ export default function Settings() {
                           ? settings.name
                           : "Wora User"}
                       </p>
-                      <p className="opacity-50">A great listner of music.</p>
+                      <p className="opacity-50">A great listener of music.</p>
                     </div>
                   </div>
                   <div className="flex w-full items-center gap-2">
@@ -272,6 +348,53 @@ export default function Settings() {
                 </form>
               </Form>
             </div>
+
+            {/* LastFM Box */}
+            <div className="wora-border h-48 w-2/5 rounded-2xl p-6">
+              <div className="flex h-full flex-col justify-between text-xs">
+                {lastFMData ? (
+                  <div className="flex items-center gap-4">
+                    <Avatar className="h-16 w-16">
+                      <AvatarImage
+                        src={
+                          lastFMData.profilePicture ||
+                          "/defaultProfilePicture.png"
+                        }
+                        alt="LastFM Profile"
+                      />
+                    </Avatar>
+                    <div className="flex flex-col">
+                      <p className="text-sm font-medium">
+                        {lastFMData.username}
+                      </p>
+                      <p className="opacity-50">LastFM Account Linked</p>
+                    </div>
+                    <Button
+                      className="w-fit justify-between text-xs"
+                      onClick={() => unlinkLastFMAccount()}
+                    >
+                      Unlink
+                      <IconX stroke={2} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center">
+                    <p className="text-sm font-medium opacity-50">
+                      No LastFM account linked.
+                    </p>
+                    <Button
+                      className="mt-4 w-fit justify-between text-nowrap text-xs"
+                      onClick={linkLastFMAccount}
+                    >
+                      Link LastFM Account
+                      <IconArrowRight stroke={2} className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Stats Box */}
             <div className="wora-border h-48 w-3/5 rounded-2xl p-6">
               <div className="flex h-full flex-col justify-between text-xs">
                 <div className="flex w-full items-center gap-4">
@@ -300,7 +423,10 @@ export default function Settings() {
                   <div className="flex h-9 w-full items-center rounded-xl bg-black/5 px-3 py-1 text-xs transition duration-300 focus:outline-none dark:bg-white/10">
                     {settings && settings.musicFolder}
                   </div>
-                  <Button className="w-fit justify-between text-nowrap text-xs" onClick={rescanLibrary}>
+                  <Button
+                    className="w-fit justify-between text-nowrap text-xs"
+                    onClick={rescanLibrary}
+                  >
                     <IconRefresh stroke={2} className="h-3.5 w-3.5" />
                   </Button>
                   <Button

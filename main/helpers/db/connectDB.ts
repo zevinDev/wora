@@ -1,5 +1,12 @@
 import { and, eq, like, sql } from "drizzle-orm";
-import { albums, songs, settings, playlistSongs, playlists } from "./schema";
+import {
+  albums,
+  songs,
+  settings,
+  playlistSongs,
+  playlists,
+  lastFM,
+} from "./schema";
 import fs from "fs";
 import { parseFile, selectCover } from "music-metadata";
 import path from "path";
@@ -99,6 +106,30 @@ export const updateSettings = async (data: any) => {
   });
 
   return true;
+};
+
+export const updateLastFM = async (data: any) => {
+  const existingRecord = await db.select().from(lastFM).limit(1);
+
+  if (existingRecord.length > 0) {
+    await db.update(lastFM).set({
+      key: data.key,
+      username: data.username,
+      profilePicture: data.profilePicture,
+    });
+  } else {
+    await db.insert(lastFM).values({
+      key: data.key,
+      username: data.username,
+      profilePicture: data.profilePicture,
+    });
+  }
+
+  return true;
+};
+
+export const getLastFM = async () => {
+  return await db.select().from(lastFM);
 };
 
 export const getSongs = async () => {
