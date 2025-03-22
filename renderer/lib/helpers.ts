@@ -182,7 +182,7 @@ export const lastFMCurrentlyPlaying = async (song: Song) => {
   const album = song.album.name;
   const duration = song.duration;
 
-  window.ipc.send("lastFM-Request", {
+  window.ipc.send("lastFMRequest", {
     artist: artist,
     track: track,
     album: album,
@@ -200,7 +200,7 @@ export const lastFMScrobble = async (song: Song) => {
   const duration = song.duration;
   const timestamp = Math.floor(Date.now() / 1000) - duration;
 
-  window.ipc.send("lastFM-Request", {
+  window.ipc.send("lastFMRequest", {
     artist: artist,
     track: track,
     album: album,

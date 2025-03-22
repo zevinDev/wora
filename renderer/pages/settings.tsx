@@ -68,11 +68,9 @@ export default function Settings() {
       setStats(response);
     });
 
-    // Fetch LastFM data if linked
-    window.ipc.invoke("lastFM-Data").then((data) => {
-      console.log("LastFM Data Response:", data); // Debugging
+    window.ipc.invoke("lastFMData").then((data) => {
       if (data && data.length > 0 && data[0].username) {
-        setLastFMData(data[0]); // Set the first element of the array
+        setLastFMData(data[0]);
       } else {
         setLastFMData(null);
       }
@@ -202,10 +200,9 @@ export default function Settings() {
             LastFM account linked successfully.
           </div>,
         );
-        // Refresh LastFM data after linking
-        window.ipc.invoke("lastFM-Data").then((data) => {
+        window.ipc.invoke("lastFMData").then((data) => {
           if (data && data.length > 0 && data[0].username) {
-            setLastFMData(data[0]); // Update the state with the new data
+            setLastFMData(data[0]);
           } else {
             setLastFMData(null);
           }
@@ -220,13 +217,12 @@ export default function Settings() {
         );
       });
   };
-  console.log("LastFM Data:", lastFMData); // Debugging
 
   const unlinkLastFMAccount = () => {
     window.ipc
-      .invoke("lastFM-Unlink")
+      .invoke("lastFMUnlink")
       .then(() => {
-        setLastFMData(null); // Clear the LastFM data
+        setLastFMData(null);
         toast(
           <div className="flex w-fit items-center gap-2 text-xs">
             <IconCheck className="text-green-400" stroke={2} size={16} />
@@ -260,8 +256,7 @@ export default function Settings() {
           <div className="opacity-50">You&apos;re on your own here.</div>
         </div>
         <div className="relative flex w-full flex-col gap-8">
-          <div className="flex w-full items-center gap-8">
-            {/* Profile Picture and Name Box */}
+          <div className="flex w-full flex-wrap items-center gap-8">
             <div className="wora-border h-48 w-2/5 rounded-2xl p-6">
               <Form {...form}>
                 <form
@@ -348,13 +343,11 @@ export default function Settings() {
                 </form>
               </Form>
             </div>
-
-            {/* LastFM Box */}
             <div className="wora-border h-48 w-2/5 rounded-2xl p-6">
               <div className="flex h-full flex-col justify-between text-xs">
                 {lastFMData ? (
-                  <div className="flex items-center gap-4">
-                    <Avatar className="h-16 w-16">
+                  <div className="flex h-full flex-col items-center justify-center">
+                    <Avatar className="mb-1 h-16 w-16">
                       <AvatarImage
                         src={
                           lastFMData.profilePicture ||
@@ -363,14 +356,14 @@ export default function Settings() {
                         alt="LastFM Profile"
                       />
                     </Avatar>
-                    <div className="flex flex-col">
+                    <div className="mb-1 flex flex-col items-center">
                       <p className="text-sm font-medium">
                         {lastFMData.username}
                       </p>
                       <p className="opacity-50">LastFM Account Linked</p>
                     </div>
                     <Button
-                      className="w-fit justify-between text-xs"
+                      className="w-fit justify-between text-nowrap text-xs"
                       onClick={() => unlinkLastFMAccount()}
                     >
                       Unlink
@@ -393,8 +386,6 @@ export default function Settings() {
                 )}
               </div>
             </div>
-
-            {/* Stats Box */}
             <div className="wora-border h-48 w-3/5 rounded-2xl p-6">
               <div className="flex h-full flex-col justify-between text-xs">
                 <div className="flex w-full items-center gap-4">

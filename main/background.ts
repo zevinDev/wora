@@ -36,6 +36,7 @@ import { parseFile } from "music-metadata";
 import fs from "fs";
 import { Client } from "@xhayper/discord-rpc";
 import axios from "axios";
+import { lastFM } from "./helpers/db/schema";
 const isProd = process.env.NODE_ENV === "production";
 
 if (isProd) {
@@ -350,7 +351,16 @@ ipcMain.handle("getActionsData", async () => {
 const API_KEY = "1c0def144788460560a7559f9bf810a5";
 
 ipcMain.handle("lastFM-Auth", async () => {
-  const authWindow = new BrowserWindow({
+  const authWindow = createAuthWindow();
+  const authUrl = buildAuthUrl();
+
+  authWindow.loadURL(authUrl);
+
+  return handleAuthFlow(authWindow);
+});
+
+function createAuthWindow(): BrowserWindow {
+  return new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
@@ -358,24 +368,23 @@ ipcMain.handle("lastFM-Auth", async () => {
       contextIsolation: true,
     },
   });
+}
 
-  const authUrl = `https://www.last.fm/api/auth/?api_key=${API_KEY}&cb=http://localhost/callback`;
+function buildAuthUrl(): string {
+  return `https://www.last.fm/api/auth/?api_key=${API_KEY}&cb=http://localhost/callback`;
+}
 
-  authWindow.loadURL(authUrl);
-
+function handleAuthFlow(authWindow: BrowserWindow): Promise<string> {
   return new Promise((resolve, reject) => {
     authWindow.webContents.on("will-redirect", async (_, url) => {
       if (url.startsWith("http://localhost/callback")) {
-        const urlParams = new URLSearchParams(url.split("?")[1]);
-        const token = urlParams.get("token");
+        const token = extractTokenFromUrl(url);
 
         if (token) {
           try {
             const sessionKey = await getSessionKey(token);
-            const lastFMData = await lastFM_Request({
-              method: "user.getInfo",
-              sk: sessionKey,
-            });
+            const lastFMData = await fetchLastFMUserData(sessionKey);
+
             await updateLastFM({
               key: sessionKey,
               username: lastFMData.user.name,
@@ -385,13 +394,14 @@ ipcMain.handle("lastFM-Auth", async () => {
             authWindow.close();
             resolve("Authentication successful!");
           } catch (error) {
-            console.error("Error during Last.fm authentication:", error);
-            authWindow.close();
-            reject(new Error("Error during authentication."));
+            handleAuthError(authWindow, error, reject);
           }
         } else {
-          authWindow.close();
-          reject(new Error("Missing token in callback URL."));
+          handleAuthError(
+            authWindow,
+            new Error("Missing token in callback URL."),
+            reject,
+          );
         }
       }
     });
@@ -400,9 +410,23 @@ ipcMain.handle("lastFM-Auth", async () => {
       reject(new Error("Authentication window closed by user."));
     });
   });
-});
+}
 
-// New methods for Last.fm integration
+function extractTokenFromUrl(url: string): string | null {
+  const urlParams = new URLSearchParams(url.split("?")[1]);
+  return urlParams.get("token");
+}
+
+function handleAuthError(
+  authWindow: BrowserWindow,
+  error: Error,
+  reject: (reason?: any) => void,
+): void {
+  console.error("Error during Last.fm authentication:", error);
+  authWindow.close();
+  reject(error);
+}
+
 async function generateApiSignature(params: any): Promise<string> {
   const response = await axios.post(
     "https://wora-backend.vercel.app/api/generate-sig",
@@ -412,58 +436,68 @@ async function generateApiSignature(params: any): Promise<string> {
 }
 
 async function getSessionKey(token: string): Promise<string> {
-  const params = {
+  const response = await lastFMRequest({
     method: "auth.getSession",
-    api_key: API_KEY,
     token: token,
-  };
-
-  params["api_sig"] = await generateApiSignature(params);
-  params["format"] = "json";
-
-  const response = await axios.get("https://ws.audioscrobbler.com/2.0/", {
-    params,
   });
-  if (response.data && response.data.session) {
-    return response.data.session.key;
+  if (response.session?.key) {
+    return response.session.key;
   } else {
     throw new Error("Failed to retrieve session key");
   }
 }
 
-async function lastFM_Request(reqParams: object): Promise<any> {
+async function fetchLastFMUserData(sessionKey: string): Promise<any> {
+  return lastFMRequest({ method: "user.getInfo", sk: sessionKey });
+}
+
+async function lastFMRequest(reqParams: object): Promise<any> {
   const sessionKey = await getLastFM();
-  const params = {
-    api_key: API_KEY,
-    ...reqParams,
-  };
-  if (params["sk"] === undefined) {
-    params["sk"] = sessionKey[0].key;
-  }
+  if (
+    sessionKey[0]?.key ||
+    reqParams["method"] === "user.getInfo" ||
+    reqParams["token"]
+  ) {
+    const params = {
+      api_key: API_KEY,
+      ...(reqParams["token"]
+        ? {}
+        : { sk: reqParams["sk"] || sessionKey[0].key }),
+      ...reqParams,
+    };
 
-  params["api_sig"] = await generateApiSignature(params);
-  params["format"] = "json";
+    params["api_sig"] = await generateApiSignature(params);
+    params["format"] = "json";
 
-  try {
-    const response = await axios.post(
-      "https://ws.audioscrobbler.com/2.0/",
-      null,
-      { params },
-    );
-    return response.data;
-  } catch (error) {
-    console.error("Error making Last.fm request:", error);
-    throw new Error("Failed to make Last.fm request.");
+    try {
+      const response = await axios.post(
+        "https://ws.audioscrobbler.com/2.0/",
+        null,
+        { params },
+      );
+      return response.data;
+    } catch (error: any) {
+      await handleLastFMRequestError(error);
+    }
   }
 }
 
-ipcMain.on("lastFM-Request", async (_, reqParams: object) => {
-  await lastFM_Request(reqParams);
+async function handleLastFMRequestError(error: any): Promise<void> {
+  if (error.response?.status === 403) {
+    console.warn("Invalid session key detected. Unlinking Last.fm account...");
+    await updateLastFM({ key: null, username: null, profilePicture: null });
+  } else {
+    console.error("Error making Last.fm request:", error);
+  }
+}
+
+ipcMain.on("lastFMRequest", async (_, reqParams: object) => {
+  await lastFMRequest(reqParams);
 });
 
-ipcMain.handle("lastFM-Data", async () => getLastFM());
+ipcMain.handle("lastFMData", async () => getLastFM());
 
-ipcMain.handle("lastFM-Unlink", async () => {
+ipcMain.handle("lastFMUnlink", async () => {
   await updateLastFM({ key: null, username: null, profilePicture: null });
 });
 

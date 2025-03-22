@@ -47,6 +47,7 @@ import {
   useAudioMetadata,
   lastFMCurrentlyPlaying,
   lastFMScrobble,
+  resetDiscordState,
 } from "@/lib/helpers";
 import { usePlayer } from "@/context/playerContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -147,10 +148,12 @@ export const Player = () => {
 
     soundRef.current.on("play", () => {
       setIsPlaying(true);
+      updateDiscordState(1, song);
     });
 
     soundRef.current.on("pause", () => {
       setIsPlaying(false);
+      resetDiscordState();
     });
 
     return () => {
