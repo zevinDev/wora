@@ -6,6 +6,7 @@ import React, {
   ReactNode,
   useEffect,
   useCallback,
+  useMemo,
 } from "react";
 
 export interface Song {
@@ -57,44 +58,103 @@ const initialPlayerState: PlayerState = {
   shuffle: false,
 };
 
+// Helper to safely access localStorage (only in browser)
+const getStorageItem = (key: string): string | null => {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem(key);
+  }
+  return null;
+};
+
+const setStorageItem = (key: string, value: string): void => {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(key, value);
+  }
+};
+
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
+// Cache for song lookups to avoid repeated array searches
+const songCache = new Map<number, Song>();
+
+// Helper function to efficiently find song index by ID
+function findSongIndexById(songs: Song[], id: number): number {
+  for (let i = 0; i < songs.length; i++) {
+    if (songs[i].id === id) return i;
+  }
+  return -1;
+}
+
 export const PlayerProvider = ({ children }: { children: ReactNode }) => {
-  const [playerState, setPlayerState] =
-    useState<PlayerState>(initialPlayerState);
+  const [playerState, setPlayerState] = useState<PlayerState>(() => {
+    // Initialize state with stored preferences - wrapped in a function for lazy initial state
+    const savedRepeat = getStorageItem("repeat");
+    const savedShuffle = getStorageItem("shuffle");
 
+    return {
+      ...initialPlayerState,
+      repeat: savedRepeat ? JSON.parse(savedRepeat) : false,
+      shuffle: savedShuffle ? JSON.parse(savedShuffle) : false,
+    };
+  });
+
+  // Save preferences when they change but batch the saves to reduce writes
   useEffect(() => {
-    // @hiaaryan: Load repeat and shuffle settings from localStorage on component mount.
-    const savedRepeat = localStorage.getItem("repeat");
+    // Only run in browser environment
+    if (typeof window === "undefined") return;
 
-    if (savedRepeat !== null) {
-      setPlayerState((prevState) => ({
-        ...prevState,
-        repeat: JSON.parse(savedRepeat),
-      }));
-    }
+    const savePreferences = () => {
+      setStorageItem("repeat", JSON.stringify(playerState.repeat));
+      setStorageItem("shuffle", JSON.stringify(playerState.shuffle));
+    };
+
+    const timeoutId = setTimeout(savePreferences, 300);
+    return () => clearTimeout(timeoutId);
+  }, [playerState.repeat, playerState.shuffle]);
+
+  // Clear song cache when component unmounts
+  useEffect(() => {
+    return () => {
+      songCache.clear();
+    };
   }, []);
-
-  useEffect(() => {
-    // @hiaaryan: Save repeat setting to localStorage whenever it changes.
-    localStorage.setItem("repeat", JSON.stringify(playerState.repeat));
-  }, [playerState.repeat]);
-
-  useEffect(() => {
-    // @hiaaryan: Save shuffle setting to localStorage whenever it changes.
-    localStorage.setItem("shuffle", JSON.stringify(playerState.shuffle));
-  }, [playerState.shuffle]);
 
   const setQueueAndPlay = useCallback(
     (songs: Song[], startIndex: number = 0, shuffle: boolean = false) => {
-      // @hiaaryan: Set the queue and play the song at startIndex, optionally shuffle the queue.
-      const shuffledQueue = shuffle
-        ? shuffleArray(songs.slice())
-        : songs.slice();
+      // Update cache with new songs for faster lookups
+      songs.forEach((song) => {
+        songCache.set(song.id, song);
+      });
+
+      // Ensure all songs have proper album data with covers preserved
+      const processedSongs = songs.map((song) => {
+        // Make sure album is defined
+        const album = song.album || {
+          id: null,
+          name: "Unknown Album",
+          artist: "Unknown Artist",
+          cover: null,
+        };
+
+        return {
+          ...song,
+          album: {
+            ...album,
+            // Ensure cover path is properly formatted
+            cover: album.cover || null,
+          },
+        };
+      });
+
+      let shuffledQueue = [...processedSongs];
+      if (shuffle) {
+        shuffledQueue = shuffleArray([...processedSongs]);
+      }
+
       setPlayerState({
         ...initialPlayerState,
         queue: shuffledQueue,
-        originalQueue: songs,
+        originalQueue: processedSongs,
         currentIndex: startIndex,
         song: shuffledQueue[startIndex],
         shuffle,
@@ -104,103 +164,166 @@ export const PlayerProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const nextSong = useCallback(() => {
-    // @hiaaryan: Play the next song in the queue, handle repeat logic.
     setPlayerState((prevState) => {
       const { currentIndex, queue, repeat, history } = prevState;
+
       if (repeat) {
-        return { ...prevState, song: queue[currentIndex] };
+        // Just replay current song without state change
+        return { ...prevState };
       } else {
         const nextIndex = currentIndex + 1;
         if (nextIndex < queue.length) {
+          // Add current song to history and move to next
           return {
             ...prevState,
             currentIndex: nextIndex,
-            history: [...history, queue[currentIndex]],
+            history:
+              currentIndex >= 0 && queue[currentIndex]
+                ? [...history, queue[currentIndex]]
+                : history,
             song: queue[nextIndex],
           };
-        } else {
-          return prevState;
         }
+        return prevState; // No more songs in queue
       }
     });
   }, []);
 
   const previousSong = useCallback(() => {
-    // @hiaaryan: Play the previous song in history, handle repeat logic.
     setPlayerState((prevState) => {
       const { queue, repeat, history } = prevState;
+
       if (repeat) {
-        return { ...prevState, song: queue[prevState.currentIndex] };
+        // Just replay current song without state change
+        return { ...prevState };
       } else if (history.length > 0) {
+        // Get last song from history
         const previous = history[history.length - 1];
+        // Find index efficiently using ID instead of indexOf (which is O(n))
+        const prevIndex = findSongIndexById(queue, previous.id);
+
         return {
           ...prevState,
           history: history.slice(0, -1),
           song: previous,
-          currentIndex: queue.indexOf(previous),
+          currentIndex: prevIndex >= 0 ? prevIndex : prevState.currentIndex,
         };
-      } else {
-        return prevState;
       }
+      return prevState;
     });
   }, []);
 
   const toggleRepeat = useCallback(() => {
-    // @hiaaryan: Toggle the repeat mode, disable shuffle if repeat is enabled.
-    setPlayerState((prevState) => {
-      const newRepeat = !prevState.repeat;
-
-      return {
-        ...prevState,
-        repeat: newRepeat,
-        shuffle: newRepeat ? false : prevState.shuffle,
-      };
-    });
+    setPlayerState((prevState) => ({
+      ...prevState,
+      repeat: !prevState.repeat,
+      // Disable shuffle if turning on repeat
+      shuffle: !prevState.repeat ? false : prevState.shuffle,
+    }));
   }, []);
 
   const toggleShuffle = useCallback(() => {
-    // @hiaaryan: Toggle the shuffle mode, update the queue to reflect shuffling or original order.
     setPlayerState((prevState) => {
       const newShuffle = !prevState.shuffle;
       const currentSong = prevState.song;
-      let newQueue: any;
-      let newIndex: any;
+
+      if (!currentSong) return prevState;
+
+      let newQueue;
+      let newIndex;
 
       if (newShuffle) {
-        // @hiaaryan: Shuffle the queue and disable repeat.
-        const remainingSongs = prevState.originalQueue.filter(
-          (song) => song.id !== currentSong?.id,
+        // Create a new shuffled queue but keep current song as first
+        const otherSongs = prevState.originalQueue.filter(
+          (song) => song.id !== currentSong.id,
         );
-        newQueue = [currentSong!, ...shuffleArray(remainingSongs)];
-      } else {
-        // @hiaaryan: Restore the original queue.
-        newQueue = prevState.originalQueue.slice();
-      }
 
-      newIndex = newQueue.indexOf(currentSong!);
+        // Ensure all songs have complete album data including cover paths
+        const songWithCompleteData = {
+          ...currentSong,
+          album: {
+            ...currentSong.album,
+            cover: currentSong.album?.cover || null,
+          },
+        };
+
+        // Make sure each shuffled song has its complete album data
+        const shuffledOtherSongs = shuffleArray([...otherSongs]).map(
+          (song) => ({
+            ...song,
+            album: {
+              ...song.album,
+              cover: song.album?.cover || null,
+            },
+          }),
+        );
+
+        newQueue = [songWithCompleteData, ...shuffledOtherSongs];
+        newIndex = 0; // Current song is now first
+      } else {
+        // Restore original queue with complete album data
+        newQueue = prevState.originalQueue.map((song) => ({
+          ...song,
+          album: {
+            ...song.album,
+            cover: song.album?.cover || null,
+          },
+        }));
+
+        // Find index efficiently using ID
+        newIndex = findSongIndexById(newQueue, currentSong.id);
+        if (newIndex < 0) newIndex = 0;
+      }
 
       return {
         ...prevState,
         shuffle: newShuffle,
         queue: newQueue,
         currentIndex: newIndex,
+        // Disable repeat if enabling shuffle
         repeat: newShuffle ? false : prevState.repeat,
       };
     });
   }, []);
 
   const playNext = useCallback((song: Song) => {
+    // Add to cache for faster lookups
+    songCache.set(song.id, song);
+
+    // Ensure song has complete album data
+    const songWithCompleteData = {
+      ...song,
+      album: {
+        ...song.album,
+        cover: song.album?.cover || null,
+      },
+    };
+
     setPlayerState((prevState) => {
+      const { currentIndex, queue, originalQueue } = prevState;
+      const insertIndex = currentIndex + 1;
+
+      // Insert efficiently without creating unnecessary copies
       const newQueue = [
-        ...prevState.queue.slice(0, prevState.currentIndex + 1),
-        song,
-        ...prevState.queue.slice(prevState.currentIndex + 1),
+        ...queue.slice(0, insertIndex),
+        songWithCompleteData,
+        ...queue.slice(insertIndex),
       ];
+
+      const originalInsertIndex =
+        findSongIndexById(
+          originalQueue,
+          currentIndex >= 0 && currentIndex < queue.length
+            ? queue[currentIndex].id
+            : -1,
+        ) + 1;
+
       const newOriginalQueue = [
-        ...prevState.originalQueue.slice(0, prevState.currentIndex + 1),
-        song,
-        ...prevState.originalQueue.slice(prevState.currentIndex + 1),
+        ...originalQueue.slice(0, originalInsertIndex),
+        songWithCompleteData,
+        ...originalQueue.slice(originalInsertIndex),
       ];
+
       return {
         ...prevState,
         queue: newQueue,
@@ -210,26 +333,62 @@ export const PlayerProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const addToQueue = useCallback((song: Song) => {
+    // Add to cache for faster lookups
+    songCache.set(song.id, song);
+
+    // Ensure song has complete album data
+    const songWithCompleteData = {
+      ...song,
+      album: {
+        ...song.album,
+        cover: song.album?.cover || null,
+      },
+    };
+
     setPlayerState((prevState) => ({
       ...prevState,
-      queue: [...prevState.queue, song],
-      originalQueue: [...prevState.originalQueue, song],
+      queue: [...prevState.queue, songWithCompleteData],
+      originalQueue: [...prevState.originalQueue, songWithCompleteData],
     }));
   }, []);
 
-  const contextValue: PlayerContextType = {
-    ...playerState,
-    setSong: (song: Song) =>
-      // @hiaaryan: Update the currently playing song.
-      setPlayerState((prevState) => ({ ...prevState, song })),
-    setQueueAndPlay,
-    nextSong,
-    previousSong,
-    toggleRepeat,
-    toggleShuffle,
-    playNext,
-    addToQueue,
-  };
+  // Memoize context value to prevent unnecessary re-renders
+  const contextValue = useMemo<PlayerContextType>(
+    () => ({
+      ...playerState,
+      setSong: (song: Song) => {
+        songCache.set(song.id, song);
+
+        // Ensure song has complete album data
+        const songWithCompleteData = {
+          ...song,
+          album: {
+            ...song.album,
+            cover: song.album?.cover || null,
+          },
+        };
+
+        setPlayerState((prev) => ({ ...prev, song: songWithCompleteData }));
+      },
+      setQueueAndPlay,
+      nextSong,
+      previousSong,
+      toggleRepeat,
+      toggleShuffle,
+      playNext,
+      addToQueue,
+    }),
+    [
+      playerState,
+      setQueueAndPlay,
+      nextSong,
+      previousSong,
+      toggleRepeat,
+      toggleShuffle,
+      playNext,
+      addToQueue,
+    ],
+  );
 
   return (
     <PlayerContext.Provider value={contextValue}>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/router";
 import { Button } from "@/components/ui/button";
@@ -6,22 +6,47 @@ import {
   IconCircleFilled,
   IconPlayerPlay,
   IconArrowsShuffle2,
+  IconClock,
 } from "@tabler/icons-react";
 import { usePlayer } from "@/context/playerContext";
 import Songs from "@/components/ui/songs";
+import Link from "next/link";
+import { convertTime } from "@/lib/helpers";
 
 type Album = {
   name: string;
   artist: string;
   year: number;
   cover: string;
-  songs: any;
+  songs: any[];
+  duration?: number;
 };
 
 export default function Album() {
   const router = useRouter();
   const [album, setAlbum] = useState<Album | null>(null);
   const { setQueueAndPlay } = usePlayer();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Disable scroll restoration on mount and route change
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      // Force scroll to top
+      window.scrollTo(0, 0);
+
+      // Disable scroll restoration for this page
+      if (history.scrollRestoration) {
+        history.scrollRestoration = "manual";
+      }
+    }
+
+    // Cleanup - reset when leaving the page
+    return () => {
+      if (history.scrollRestoration) {
+        history.scrollRestoration = "auto";
+      }
+    };
+  }, [router.asPath]);
 
   useEffect(() => {
     if (!router.query.slug) return;
@@ -43,6 +68,17 @@ export default function Album() {
     if (album) {
       setQueueAndPlay(album.songs, 0, true);
     }
+  };
+
+  // Calculate total duration from songs if not provided by the backend
+  const calculateTotalDuration = () => {
+    if (!album) return 0;
+
+    if (album.duration) return album.duration;
+
+    return (
+      album.songs?.reduce((total, song) => total + (song.duration || 0), 0) || 0
+    );
   };
 
   return (
@@ -70,9 +106,24 @@ export default function Album() {
               <div>
                 <h1 className="text-2xl font-medium">{album && album.name}</h1>
                 <p className="flex items-center gap-2 text-sm">
-                  {album && album.artist}{" "}
+                  <Link
+                    href={
+                      album
+                        ? `/artists/${encodeURIComponent(album.artist)}`
+                        : "#"
+                    }
+                  >
+                    <span className="text-primary cursor-pointer underline-offset-2 hover:underline hover:opacity-80">
+                      {album && album.artist}
+                    </span>
+                  </Link>
                   <IconCircleFilled stroke={2} size={5} />{" "}
                   {album && album.year ? album.year : "Unknown"}
+                  <IconCircleFilled stroke={2} size={5} />{" "}
+                  <span className="flex items-center gap-1">
+                    <IconClock size={14} stroke={2} />
+                    {album ? convertTime(calculateTotalDuration()) : "--:--"}
+                  </span>
                 </p>
               </div>
               <div className="flex gap-2">

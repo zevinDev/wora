@@ -14,32 +14,39 @@ export interface LyricLine {
 }
 
 export const convertTime = (seconds: number) => {
-  const minutes = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60)
+  if (!seconds) return "--:--";
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60)
     .toString()
     .padStart(2, "0");
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs}`;
+  }
   return `${minutes}:${secs}`;
 };
 
 async function fetchCover(artist: string, album: string) {
   const queryTerms = [
-    !artist || artist === 'Various Artist'
-      ? ''
+    !artist || artist === "Various Artist"
+      ? ""
       : `artist:"${artist.replace(/"/g, '\\"')}"`,
-    !album || album === 'Unknown Album' || album === ''
-      ? ''
-      : `release:"${album.replace(/"/g, '\\"')}"`
+    !album || album === "Unknown Album" || album === ""
+      ? ""
+      : `release:"${album.replace(/"/g, '\\"')}"`,
   ];
 
-  const query = queryTerms.join(' ').trim();
+  const query = queryTerms.join(" ").trim();
 
   try {
-    const response = await axios.get('https://musicbrainz.org/ws/2/release', {
+    const response = await axios.get("https://musicbrainz.org/ws/2/release", {
       params: {
-        fmt: 'json',
-        limit: '3',
-        query
-      }
+        fmt: "json",
+        limit: "3",
+        query,
+      },
     });
 
     for (const release of response.data.releases) {
@@ -162,7 +169,7 @@ export const updateDiscordState = async (seek: number, song: Song) => {
   if (!song) return;
 
   const details = song.name;
-  const state = (song.artist).split(/[,&(]/)[0].trim();;
+  const state = song.artist.split(/[,&(]/)[0].trim();
   const duration = song.duration;
 
   const cover = await fetchCover(song.album.artist, song.album.name);

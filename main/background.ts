@@ -7,8 +7,10 @@ import {
   addSongToPlaylist,
   addToFavourites,
   createPlaylist,
+  db,
   getAlbumWithSongs,
   getAlbums,
+  getArtistWithAlbums,
   getLibraryStats,
   getPlaylistWithSongs,
   getPlaylists,
@@ -18,15 +20,25 @@ import {
   isSongFavorite,
   removeSongFromPlaylist,
   searchDB,
+  searchSongs,
   updatePlaylist,
   updateSettings,
+  getSongs,
+  getAlbumsWithDuration,
 } from "./helpers/db/connectDB";
 import { initDatabase } from "./helpers/db/createDB";
 import { parseFile } from "music-metadata";
 import fs from "fs";
 import { Client } from "@xhayper/discord-rpc";
+import { eq, sql } from "drizzle-orm";
+import { albums } from "./helpers/db/schema";
 
 const isProd = process.env.NODE_ENV === "production";
+
+// Set the app user model id for Windows
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.hiaaryan.wora");
+}
 
 if (isProd) {
   serve({ directory: "app" });
@@ -37,21 +49,49 @@ if (isProd) {
 let mainWindow: any;
 let settings: any;
 
-// @hiaaryan: Initialize Database on Startup
+// Global cache for frequently accessed data
+const dataCache = {
+  libraryStats: null,
+  randomItems: null,
+  lastUpdated: 0,
+};
+
+// @hiaaryan: Initialize Database on Startup with optimized loading
 const initializeLibrary = async () => {
   try {
     // Initialize SQLite database
     await initDatabase();
 
-    // Get settings
+    // Only load essential data at startup (settings)
     settings = await getSettings();
 
     if (settings) {
-      // Initialize the music library
-      await initializeData(settings.musicFolder);
+      // Start a non-blocking initialization of the music library
+      // This allows the app UI to load while data is being processed
+      setTimeout(() => {
+        initializeData(settings.musicFolder, true)
+          .then(() => {
+            // Pre-cache some common data for faster access
+            Promise.all([getLibraryStats(), getRandomLibraryItems()]).then(
+              ([stats, randomItems]) => {
+                dataCache.libraryStats = stats;
+                dataCache.randomItems = randomItems;
+                dataCache.lastUpdated = Date.now();
+
+                // Notify renderer that library is fully loaded
+                if (mainWindow) {
+                  mainWindow.webContents.send("library-initialized");
+                }
+              },
+            );
+          })
+          .catch((err) => {
+            console.error("Error initializing music library:", err);
+          });
+      }, 1000); // Delay initialization to prioritize app UI loading
     }
   } catch (error) {
-    console.error('Error initializing library:', error);
+    console.error("Error initializing library:", error);
   }
 };
 
@@ -113,43 +153,46 @@ const initializeLibrary = async () => {
 
 // @hiaaryan: Initialize Discord RPC
 const client = new Client({
-  clientId: "1243707416588320800"
+  clientId: "1243707416588320800",
 });
 
-ipcMain.on("set-rpc-state", async (_, { details, state, seek, duration, cover }) => {
-  let startTimestamp, endTimestamp;
+ipcMain.on(
+  "set-rpc-state",
+  async (_, { details, state, seek, duration, cover }) => {
+    let startTimestamp, endTimestamp;
 
-  if (duration && seek) {
-    const now = Math.ceil(Date.now());
-    startTimestamp = now - (seek * 1000);
-    endTimestamp = now + ((duration - seek) * 1000);
-  }
-
-  const setActivity = {
-    details,
-    state,
-    largeImageKey: cover,
-    instance: false,
-    type: 2,
-    startTimestamp: startTimestamp,
-    endTimestamp: endTimestamp,
-    buttons: [
-      { label: "Support Project", url: "https://github.com/hiaaryan/wora" },
-    ]
-  };
-
-  if (!client.isConnected) {
-    try {
-      await client.login();
-    } catch (error) {
-      console.error('Error logging into Discord:', error);
+    if (duration && seek) {
+      const now = Math.ceil(Date.now());
+      startTimestamp = now - seek * 1000;
+      endTimestamp = now + (duration - seek) * 1000;
     }
-  }
 
-  if (client.isConnected) {
-    client.user.setActivity(setActivity);
-  }
-});
+    const setActivity = {
+      details,
+      state,
+      largeImageKey: cover,
+      instance: false,
+      type: 2,
+      startTimestamp: startTimestamp,
+      endTimestamp: endTimestamp,
+      buttons: [
+        { label: "Support Project", url: "https://github.com/hiaaryan/wora" },
+      ],
+    };
+
+    if (!client.isConnected) {
+      try {
+        await client.login();
+      } catch (error) {
+        console.error("Error logging into Discord:", error);
+      }
+    }
+
+    if (client.isConnected) {
+      client.user.setActivity(setActivity);
+    }
+  },
+);
 
 // @hiaaryan: Called to Rescan Library
 ipcMain.handle("rescanLibrary", async () => {
@@ -212,9 +255,57 @@ app.whenReady().then(() => {
   tray.setContextMenu(contextMenu);
 });
 
+// Use cached data when available for frequently accessed endpoints
+ipcMain.handle("getLibraryStats", async () => {
+  // Check if we have fresh cached data (less than 5 minutes old)
+  if (dataCache.libraryStats && Date.now() - dataCache.lastUpdated < 300000) {
+    return dataCache.libraryStats;
+  }
+
+  // Otherwise get fresh data and update cache
+  const stats = await getLibraryStats();
+  dataCache.libraryStats = stats;
+  dataCache.lastUpdated = Date.now();
+  return stats;
+});
+
+ipcMain.handle("getRandomLibraryItems", async () => {
+  // Check if we have fresh cached data (less than 5 minutes old)
+  if (dataCache.randomItems && Date.now() - dataCache.lastUpdated < 300000) {
+    return dataCache.randomItems;
+  }
+
+  // Otherwise get fresh data and update cache
+  const libraryItems = await getRandomLibraryItems();
+  dataCache.randomItems = libraryItems;
+  dataCache.lastUpdated = Date.now();
+  return libraryItems;
+});
+
 // @hiaaryan: IPC Handlers from Renderer
 ipcMain.handle("getAlbums", async (_, page) => {
   return await getAlbums(page);
+});
+
+// Page state reset handlers
+ipcMain.on("resetAlbumsPageState", () => {
+  // Notify renderer to reset albums page state
+  mainWindow.webContents.send("resetAlbumsState");
+});
+
+ipcMain.on("resetSongsPageState", () => {
+  // Notify renderer to reset songs page state
+  mainWindow.webContents.send("resetSongsState");
+});
+
+ipcMain.on("resetPlaylistsPageState", () => {
+  // Notify renderer to reset playlists page state
+  mainWindow.webContents.send("resetPlaylistsState");
+});
+
+ipcMain.on("resetHomePageState", () => {
+  // Notify renderer to reset home page state
+  mainWindow.webContents.send("resetHomeState");
 });
 
 ipcMain.handle("getAllPlaylists", async () => {
@@ -254,31 +345,29 @@ ipcMain.handle("search", async (_, query: string) => {
 
 ipcMain.handle("createPlaylist", async (_, data: any) => {
   const playlist = await createPlaylist(data);
+  // Invalidate cache when data changes
+  dataCache.lastUpdated = 0;
   return playlist;
-});
-
-ipcMain.handle("getLibraryStats", async () => {
-  const stats = await getLibraryStats();
-  return stats;
-});
-
-ipcMain.handle("getRandomLibraryItems", async () => {
-  const libraryItems = await getRandomLibraryItems();
-  return libraryItems;
 });
 
 ipcMain.handle("updatePlaylist", async (_, data: any) => {
   const playlist = await updatePlaylist(data);
+  // Invalidate cache when data changes
+  dataCache.lastUpdated = 0;
   return playlist;
 });
 
 ipcMain.handle("addSongToPlaylist", async (_, data: any) => {
   const add = await addSongToPlaylist(data.playlistId, data.songId);
+  // Invalidate cache when data changes
+  dataCache.lastUpdated = 0;
   return add;
 });
 
 ipcMain.handle("removeSongFromPlaylist", async (_, data: any) => {
   const remove = await removeSongFromPlaylist(data.playlistId, data.songId);
+  // Invalidate cache when data changes
+  dataCache.lastUpdated = 0;
   return remove;
 });
 
@@ -294,7 +383,10 @@ ipcMain.handle("updateSettings", async (_, data: any) => {
 });
 
 ipcMain.handle("uploadProfilePicture", async (_, file) => {
-  const uploadsDir = path.join(app.getPath("userData"), "utilities/uploads/profile");
+  const uploadsDir = path.join(
+    app.getPath("userData"),
+    "utilities/uploads/profile",
+  );
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
@@ -308,7 +400,10 @@ ipcMain.handle("uploadProfilePicture", async (_, file) => {
 });
 
 ipcMain.handle("uploadPlaylistCover", async (_, file) => {
-  const uploadsDir = path.join(app.getPath("userData"), "utilities/uploads/playlists");
+  const uploadsDir = path.join(
+    app.getPath("userData"),
+    "utilities/uploads/playlists",
+  );
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
@@ -326,6 +421,98 @@ ipcMain.handle("getActionsData", async () => {
   const appVersion = app.getVersion();
 
   return { isNotMac, appVersion };
+});
+
+ipcMain.handle("getArtistWithAlbums", async (_, artist: string) => {
+  const artistData = await getArtistWithAlbums(artist);
+  return artistData;
+});
+
+// New handler to get all songs for shuffle feature
+ipcMain.handle("getAllSongs", async () => {
+  try {
+    console.log("Getting all songs for shuffle...");
+
+    // Get all songs with their album information in a single query for better performance
+    const songsWithAlbums = await db.query.songs.findMany({
+      with: {
+        album: true, // This fetches the full album data for each song
+      },
+      orderBy: sql`RANDOM()`, // Randomize the songs to make shuffling more natural
+    });
+
+    // Transform the data to match the expected format in the frontend
+    const formattedSongs = songsWithAlbums.map((song) => {
+      return {
+        id: song.id,
+        name: song.name || "Unknown Title",
+        artist: song.artist || "Unknown Artist",
+        duration: song.duration || 0,
+        filePath: song.filePath,
+        album: song.album
+          ? {
+              id: song.album.id,
+              name: song.album.name || "Unknown Album",
+              artist: song.album.artist || "Unknown Artist",
+              cover: song.album.cover || null,
+              year: song.album.year,
+            }
+          : {
+              id: null,
+              name: "Unknown Album",
+              artist: "Unknown Artist",
+              cover: null,
+              year: null,
+            },
+      };
+    });
+
+    console.log(
+      `Returning ${formattedSongs.length} songs with complete album data`,
+    );
+    return formattedSongs;
+  } catch (error) {
+    console.error("Error in getAllSongs:", error);
+    return [];
+  }
+});
+
+// New handler to get songs with pagination
+ipcMain.handle("getSongs", async (_, page: number = 1) => {
+  try {
+    console.log(`Getting songs for page ${page}...`);
+    const songsWithAlbums = await getSongs(page);
+    return songsWithAlbums;
+  } catch (error) {
+    console.error("Error in getSongs:", error);
+    return [];
+  }
+});
+
+// Handler for searching songs with the new searchSongs function
+ipcMain.handle("searchSongs", async (_, query: string) => {
+  try {
+    console.log(`Searching songs with query: "${query}"`);
+    const results = await searchSongs(query);
+    console.log(`Found ${results.length} song matches`);
+    return results;
+  } catch (error) {
+    console.error("Error in searchSongs:", error);
+    return [];
+  }
+});
+
+// Handler for getting albums with calculated durations
+ipcMain.handle("getAlbumsWithDuration", async (_, page: number = 1) => {
+  try {
+    console.log(`Getting albums with durations for page ${page}...`);
+    const albumsWithDurations = await getAlbumsWithDuration(page);
+    console.log(`Found ${albumsWithDurations.length} albums with durations`);
+    return albumsWithDurations;
+  } catch (error) {
+    console.error("Error in getAlbumsWithDuration:", error);
+    return [];
+  }
 });
 
 app.on("window-all-closed", () => {

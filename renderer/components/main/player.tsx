@@ -39,7 +39,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { convertTime, isSyncedLyrics, parseLyrics, updateDiscordState, useAudioMetadata } from "@/lib/helpers";
+import {
+  convertTime,
+  isSyncedLyrics,
+  parseLyrics,
+  updateDiscordState,
+  useAudioMetadata,
+} from "@/lib/helpers";
 import { usePlayer } from "@/context/playerContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
@@ -54,17 +60,36 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
+// Toast notification component for consistent messaging
+const NotificationToast = ({ success, message }) => (
+  <div className="flex w-fit items-center gap-2 text-xs">
+    {success ? (
+      <IconCheck className="text-green-400" stroke={2} size={16} />
+    ) : (
+      <IconX className="text-red-500" stroke={2} size={16} />
+    )}
+    {message}
+  </div>
+);
+
 export const Player = () => {
+  // Player state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [_, setSeekPosition] = useState(0);
+  const [seekPosition, setSeekPosition] = useState(0);
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
-  const soundRef = useRef<Howl | null>(null);
   const [currentLyric, setCurrentLyric] = useState(null);
   const [showLyrics, setShowLyrics] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [isFavourite, setIsFavourite] = useState(false);
   const [playlists, setPlaylists] = useState([]);
+  const [isClient, setIsClient] = useState(false);
+
+  // References
+  const soundRef = useRef<Howl | null>(null);
+  const seekUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Get player context and song metadata
   const {
     song,
     nextSong,
@@ -80,138 +105,44 @@ export const Player = () => {
 
   const { metadata, lyrics, favourite } = useAudioMetadata(song?.filePath);
 
+  // Player control functions - Define handlePlayPause earlier to avoid reference error
   const handlePlayPause = useCallback(() => {
-    if (soundRef.current) {
-      if (soundRef.current.playing()) {
-        soundRef.current.pause();
-      } else {
-        soundRef.current.play();
-      }
+    if (!soundRef.current) return;
+
+    if (soundRef.current.playing()) {
+      soundRef.current.pause();
+    } else {
+      soundRef.current.play();
     }
   }, []);
 
-  useEffect(() => {
-    if (!song?.filePath) return;
+  const handleSeek = useCallback((value: number[]) => {
+    if (!soundRef.current) return;
 
-    const sound = new Howl({
-      src: ["wora://" + encodeURIComponent(song?.filePath)],
-      format: [song?.filePath.split(".").pop()],
-      html5: true,
-      autoplay: true,
-      preload: true,
-      volume: volume,
-      onload: () => {
-        setSeekPosition(0);
-        setIsPlaying(true);
-        updateDiscordState(1, song);
-      },
-      onloaderror: (error) => {
-        setIsPlaying(false);
-        console.error("Error loading audio:", error);
-      },
-      onend: () => {
-        setIsPlaying(false);
-        if (!repeat) {
-          nextSong();
-        }
-      },
-    });
-
-    soundRef.current = sound;
-
-    return () => {
-      sound.unload();
-    };
-  }, [song, nextSong]);
-
-  useEffect(() => {
-    if (!song) return;
-
-    const updateSeek = () => {
-      if (soundRef.current?.playing()) {
-        setSeekPosition(soundRef.current?.seek());
-      }
-    };
-
-    const interval = setInterval(updateSeek, 100);
-
-    soundRef.current.on("play", () => {
-      setIsPlaying(true);
-    });
-
-    soundRef.current.on("pause", () => {
-      setIsPlaying(false);
-    });
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [song]);
-
-  useEffect(() => {
-    if (!lyrics || !song) return;
-
-    const parsedLyrics = isSyncedLyrics(lyrics) ? parseLyrics(lyrics) : [];
-
-    const updateLyrics = () => {
-      if (soundRef.current?.playing()) {
-        const currentSeek = soundRef.current.seek();
-        const currentLyricLine = parsedLyrics.find((line, index) => {
-          const nextLine = parsedLyrics[index + 1];
-          return (
-            currentSeek >= line.time &&
-            (!nextLine || currentSeek < nextLine.time)
-          );
-        });
-
-        setCurrentLyric(currentLyricLine || null);
-      }
-    };
-
-    const interval = setInterval(updateLyrics, 1000);
-
-    return () => clearInterval(interval);
-  }, [song, lyrics]);
-
-  useEffect(() => {
-    soundRef.current?.volume(volume);
-    soundRef.current?.mute(isMuted);
-  }, [volume, isMuted]);
-
-  useEffect(() => {
-    if (soundRef.current) {
-      soundRef.current.loop(repeat);
-    }
-  }, [repeat]);
-
-  useEffect(() => {
-    if (song) {
-      setIsFavourite(favourite);
-    }
-  }, [song, favourite]);
+    soundRef.current.seek(value[0]);
+    setSeekPosition(value[0]);
+  }, []);
 
   const handleVolume = useCallback((value: number[]) => {
     setVolume(value[0]);
   }, []);
 
-  const handleSeek = useCallback((value: number[]) => {
-    if (soundRef.current) {
-      soundRef.current.seek(value[0]);
-      setSeekPosition(value[0]);
-    }
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => !prev);
   }, []);
 
   const toggleFavourite = useCallback((id: number) => {
     if (!id) return;
+
     window.ipc.send("addToFavourites", id);
     setIsFavourite((prev) => !prev);
   }, []);
 
   const handleLyricClick = useCallback((time: number) => {
-    if (soundRef.current) {
-      soundRef.current.seek(time);
-      setSeekPosition(time);
-    }
+    if (!soundRef.current) return;
+
+    soundRef.current.seek(time);
+    setSeekPosition(time);
   }, []);
 
   const toggleLyrics = useCallback(() => {
@@ -222,43 +153,373 @@ export const Player = () => {
     setShowQueue((prev) => !prev);
   }, []);
 
-  const toggleMute = useCallback(() => {
-    setIsMuted((prev) => !prev);
-  }, []);
+  const addSongToPlaylist = useCallback(
+    (playlistId: number, songId: number) => {
+      window.ipc
+        .invoke("addSongToPlaylist", { playlistId, songId })
+        .then((response) => {
+          toast(
+            <NotificationToast
+              success={response === true}
+              message={
+                response === true
+                  ? "Song added to playlist"
+                  : "Song already exists in playlist"
+              }
+            />,
+          );
+        })
+        .catch(() => {
+          toast(
+            <NotificationToast
+              success={false}
+              message="Failed to add song to playlist"
+            />,
+          );
+        });
+    },
+    [],
+  );
 
+  // Enable client-side rendering
   useEffect(() => {
-    window.ipc.invoke("getAllPlaylists").then((response) => {
-      setPlaylists(response);
-    });
+    setIsClient(true);
+
+    // Load playlists once on component mount
+    window.ipc
+      .invoke("getAllPlaylists")
+      .then(setPlaylists)
+      .catch((err) => console.error("Failed to load playlists:", err));
+
+    // Clean up on unmount
+    return () => {
+      if (seekUpdateInterval.current) {
+        clearInterval(seekUpdateInterval.current);
+      }
+    };
   }, []);
 
-  const addSongToPlaylist = (playlistId: number, songId: number) => {
-    window.ipc
-      .invoke("addSongToPlaylist", {
-        playlistId,
-        songId,
-      })
-      .then((response) => {
-        if (response === true) {
-          toast(
-            <div className="flex w-fit items-center gap-2 text-xs">
-              <IconCheck className="text-green-400" stroke={2} size={16} />
-              Song is added to playlist.
-            </div>,
-          );
-        } else {
-          toast(
-            <div className="flex w-fit items-center gap-2 text-xs">
-              <IconX className="text-red-500" stroke={2} size={16} />
-              Song already exists in playlist.
-            </div>,
-          );
+  // Update favorite status when song changes
+  useEffect(() => {
+    if (song) {
+      setIsFavourite(favourite);
+    }
+  }, [song, favourite]);
+
+  // Initialize or update audio when song changes
+  useEffect(() => {
+    // Clean up previous audio and intervals
+    if (soundRef.current) {
+      soundRef.current.unload();
+    }
+
+    if (seekUpdateInterval.current) {
+      clearInterval(seekUpdateInterval.current);
+    }
+
+    // No song to play, exit early
+    if (!song?.filePath) return;
+
+    // Create new Howl instance
+    const sound = new Howl({
+      src: [`wora://${encodeURIComponent(song.filePath)}`],
+      format: [song.filePath.split(".").pop()],
+      html5: true,
+      autoplay: true,
+      preload: true,
+      volume: isMuted ? 0 : volume,
+      onload: () => {
+        setSeekPosition(0);
+        setIsPlaying(true);
+        updateDiscordState(1, song);
+        window.ipc.send("update-window", [true, song?.artist, song?.name]);
+      },
+      onloaderror: (error) => {
+        console.error("Error loading audio:", error);
+        setIsPlaying(false);
+        toast(
+          <NotificationToast success={false} message="Failed to load audio" />,
+        );
+      },
+      onend: () => {
+        setIsPlaying(false);
+        window.ipc.send("update-window", [false, null, null]);
+        if (!repeat) {
+          nextSong();
         }
+      },
+      onplay: () => {
+        setIsPlaying(true);
+        window.ipc.send("update-window", [true, song?.artist, song?.name]);
+      },
+      onpause: () => {
+        setIsPlaying(false);
+        window.ipc.send("update-window", [false, false, false]);
+      },
+    });
+
+    soundRef.current = sound;
+
+    // Set up seek position updater
+    seekUpdateInterval.current = setInterval(() => {
+      if (sound.playing()) {
+        setSeekPosition(sound.seek());
+      }
+    }, 100);
+
+    // Clean up on unmount or when song changes
+    return () => {
+      sound.unload();
+      if (seekUpdateInterval.current) {
+        clearInterval(seekUpdateInterval.current);
+      }
+    };
+  }, [song, nextSong]); // Removed volume and isMuted from dependencies
+
+  // Handle lyrics updates
+  useEffect(() => {
+    if (!lyrics || !song || !isPlaying) return;
+
+    // Only parse lyrics if they exist and are synced
+    if (!isSyncedLyrics(lyrics)) return;
+
+    const parsedLyrics = parseLyrics(lyrics);
+    let lyricUpdateInterval: NodeJS.Timeout;
+
+    const updateCurrentLyric = () => {
+      if (!soundRef.current?.playing()) return;
+
+      const currentSeek = soundRef.current.seek();
+      const currentLyricLine = parsedLyrics.find((line, index) => {
+        const nextLine = parsedLyrics[index + 1];
+        return (
+          currentSeek >= line.time && (!nextLine || currentSeek < nextLine.time)
+        );
       });
+
+      setCurrentLyric(currentLyricLine || null);
+    };
+
+    // Update lyrics less frequently than seek position (better performance)
+    lyricUpdateInterval = setInterval(updateCurrentLyric, 500);
+
+    return () => clearInterval(lyricUpdateInterval);
+  }, [song, lyrics, isPlaying]);
+
+  // Setup MediaSession API for media controls
+  useEffect(() => {
+    if (!song || !("mediaSession" in navigator)) return;
+
+    const updateMediaSessionMetadata = async () => {
+      if ("mediaSession" in navigator && song) {
+        const toDataURL = (
+          url: string,
+          callback: (dataUrl: string) => void,
+        ) => {
+          const xhr = new XMLHttpRequest();
+          xhr.onload = () => {
+            const reader = new FileReader();
+            reader.onloadend = () => callback(reader.result as string);
+            reader.readAsDataURL(xhr.response);
+          };
+          xhr.open("GET", url);
+          xhr.responseType = "blob";
+          xhr.send();
+        };
+
+        const coverUrl = song.album?.cover
+          ? song.album.cover.startsWith("/") || song.album.cover.includes("://")
+            ? song.album.cover
+            : `wora://${song.album.cover}`
+          : "/coverArt.png";
+
+        toDataURL(coverUrl, (dataUrl) => {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: song?.name || "Unknown Title",
+            artist: song?.artist || "Unknown Artist",
+            album: song?.album?.name || "Unknown Album",
+            artwork: [{ src: dataUrl }],
+          });
+
+          // Set application name for Windows Media Controller
+          if ("mediaSession" in navigator) {
+            // @ts-ignore - applicationName is not in the official type definitions but works in Windows
+            navigator.mediaSession.metadata.applicationName = "Wora";
+          }
+
+          navigator.mediaSession.setActionHandler("play", handlePlayPause);
+          navigator.mediaSession.setActionHandler("pause", handlePlayPause);
+          navigator.mediaSession.setActionHandler(
+            "previoustrack",
+            previousSong,
+          );
+          navigator.mediaSession.setActionHandler("nexttrack", nextSong);
+          navigator.mediaSession.setActionHandler("seekbackward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(Math.max(0, soundRef.current.seek() - 10));
+            }
+          });
+          navigator.mediaSession.setActionHandler("seekforward", () => {
+            if (soundRef.current) {
+              soundRef.current.seek(
+                Math.min(
+                  soundRef.current.duration(),
+                  soundRef.current.seek() + 10,
+                ),
+              );
+            }
+          });
+        });
+      }
+    };
+
+    updateMediaSessionMetadata();
+
+    const removeMediaControlListener = window.ipc.on(
+      "media-control",
+      (command) => {
+        switch (command) {
+          case "play-pause":
+            handlePlayPause();
+            break;
+          case "previous":
+            previousSong();
+            break;
+          case "next":
+            nextSong();
+            break;
+          default:
+            break;
+        }
+      },
+    );
+
+    return () => {
+      removeMediaControlListener();
+    };
+  }, [song, previousSong, nextSong]);
+
+  // Apply volume and mute settings when they change
+  useEffect(() => {
+    if (!soundRef.current) return;
+
+    soundRef.current.volume(volume);
+    soundRef.current.mute(isMuted);
+  }, [volume, isMuted]);
+
+  // Apply repeat setting when it changes
+  useEffect(() => {
+    if (soundRef.current) {
+      soundRef.current.loop(repeat);
+    }
+  }, [repeat]);
+
+  // Server-side rendering placeholder
+  if (!isClient) {
+    return (
+      <div className="wora-border h-28 w-full overflow-hidden rounded-2xl p-6">
+        <div className="relative flex h-full w-full items-center">
+          {/* Empty placeholder to prevent hydration errors */}
+        </div>
+      </div>
+    );
+  }
+
+  // Queue/History display component (extracted for readability)
+  const QueuePanel = () => (
+    <div className="wora-border relative h-full w-full rounded-2xl bg-white/70 backdrop-blur-xl dark:bg-black/70">
+      <div className="h-utility w-full max-w-3xl px-6 pt-6">
+        <Tabs
+          defaultValue="queue"
+          className="flex h-full w-full flex-col gap-4 gradient-mask-b-70"
+        >
+          <TabsList className="w-full">
+            <TabsTrigger value="queue" className="w-full gap-2">
+              <IconListTree stroke={2} size={15} /> Queue
+            </TabsTrigger>
+            <TabsTrigger value="history" className="w-full gap-2">
+              <IconClock stroke={2} size={15} /> History
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Queue tab content */}
+          <TabsContent
+            value="queue"
+            className="no-scrollbar flex-grow overflow-y-auto pb-64"
+          >
+            <ul className="flex flex-col gap-4">
+              {queue.slice(currentIndex + 1).map((song) => (
+                <SongListItem key={song.id} song={song} />
+              ))}
+
+              {queue.length <= 1 && (
+                <div className="flex h-40 items-center justify-center text-sm opacity-50">
+                  Queue is empty
+                </div>
+              )}
+            </ul>
+          </TabsContent>
+
+          {/* History tab content */}
+          <TabsContent
+            value="history"
+            className="no-scrollbar flex-grow overflow-y-auto pb-64"
+          >
+            <ul className="flex flex-col gap-4">
+              {[...history].reverse().map((song) => (
+                <SongListItem key={`history-${song.id}`} song={song} />
+              ))}
+
+              {history.length === 0 && (
+                <div className="flex h-40 items-center justify-center text-sm opacity-50">
+                  No playback history
+                </div>
+              )}
+            </ul>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+
+  // Helper component for song items in queue/history
+  const SongListItem = ({ song }) => (
+    <li className="flex w-full items-center gap-4 overflow-hidden">
+      <div className="relative min-h-14 min-w-14 overflow-hidden rounded-lg shadow-lg">
+        <Image
+          alt={song.name || "Track"}
+          src={
+            song?.album?.cover
+              ? song.album.cover.startsWith("/") ||
+                song.album.cover.includes("://")
+                ? `${song.album.cover}`
+                : `wora://${song.album.cover}`
+              : "/coverArt.png"
+          }
+          fill
+          priority={false}
+          className="object-cover"
+        />
+      </div>
+      <div className="w-4/5 overflow-hidden">
+        <p className="truncate text-sm font-medium">{song.name}</p>
+        <p className="truncate opacity-50">{song.artist}</p>
+      </div>
+    </li>
+  );
+
+  // Get song cover URL helper
+  const getSongCoverUrl = (cover) => {
+    if (!cover) return "/coverArt.png";
+
+    return cover.startsWith("/") || cover.includes("://")
+      ? cover
+      : `wora://${cover}`;
   };
 
   return (
     <div>
+      {/* Lyrics overlay */}
       <div className="absolute right-0 top-0 w-full">
         {showLyrics && lyrics && (
           <Lyrics
@@ -269,101 +530,28 @@ export const Player = () => {
           />
         )}
       </div>
+
+      {/* Queue panel */}
       <div className="!absolute right-0 top-0 w-96">
-        {showQueue && (
-          <div className="wora-border relative h-full w-full rounded-2xl bg-white/70 backdrop-blur-xl dark:bg-black/70">
-            <div className="h-utility w-full max-w-3xl px-6 pt-6">
-              <Tabs
-                defaultValue="queue"
-                className="flex h-full w-full flex-col gap-4 gradient-mask-b-70"
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="queue" className="w-full gap-2">
-                    <IconListTree stroke={2} size={15} /> Queue
-                  </TabsTrigger>
-                  <TabsTrigger value="history" className="w-full gap-2">
-                    <IconClock stroke={2} size={15} /> History
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent
-                  value="queue"
-                  className="no-scrollbar flex-grow overflow-y-auto pb-64"
-                >
-                  <ul className="flex flex-col gap-4">
-                    {queue.slice(currentIndex + 1).map((song) => (
-                      <li
-                        key={song.id}
-                        className="flex w-full items-center gap-4 overflow-hidden gradient-mask-r-70"
-                      >
-                        <div className="relative min-h-14 min-w-14 overflow-hidden rounded-lg shadow-lg">
-                          <Image
-                            alt="Album Cover"
-                            src={`wora://${song?.album.cover}`}
-                            fill
-                            priority={true}
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="w-4/5 overflow-hidden">
-                          <p className="text-nowrap text-sm font-medium">
-                            {song.name}
-                          </p>
-                          <p className="text-nowrap opacity-50">
-                            {song.artist}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </TabsContent>
-                <TabsContent
-                  value="history"
-                  className="no-scrollbar flex-grow overflow-y-auto pb-64"
-                >
-                  <ul className="flex flex-col gap-4">
-                    {[...history].reverse().map((song) => (
-                      <li
-                        key={song.id}
-                        className="flex w-full items-center gap-4 overflow-hidden gradient-mask-r-70"
-                      >
-                        <div className="relative h-14 w-14 overflow-hidden rounded-lg shadow-lg">
-                          <Image
-                            alt="Album Cover"
-                            src={`wora://${song?.album.cover}`}
-                            fill
-                            priority={true}
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="w-4/5 overflow-hidden">
-                          <p className="text-nowrap text-sm font-medium">
-                            {song.name}
-                          </p>
-                          <p className="text-nowrap opacity-50">
-                            {song.artist}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </TabsContent>
-              </Tabs>
-            </div>
-          </div>
-        )}
+        {showQueue && <QueuePanel />}
       </div>
-      <div className="w-full h-28 rounded-2xl wora-border overflow-hidden p-6">
+
+      {/* Main player UI */}
+      <div className="wora-border h-28 w-full overflow-hidden rounded-2xl p-6">
         <div className="relative flex h-full w-full items-center">
           <TooltipProvider>
-            <div className="absolute left-0 flex justify-start w-1/4 overflow-hidden gradient-mask-r-70 items-center gap-4">
+            {/* Left side - Song info */}
+            <div className="absolute left-0 flex w-1/4 items-center justify-start gap-4 overflow-hidden">
               {song ? (
                 <ContextMenu>
                   <ContextMenuTrigger>
-                    <Link href={`/albums/${song.album.id}`}>
-                      <div className="relative min-h-[4.25rem] min-w-[4.25rem] overflow-hidden rounded-lg shadow-lg transition duration-500">
+                    <Link
+                      href={song.album?.id ? `/albums/${song.album.id}` : "#"}
+                    >
+                      <div className="relative min-h-[4.25rem] min-w-[4.25rem] overflow-hidden rounded-lg shadow-lg transition">
                         <Image
                           alt="Album Cover"
-                          src={`wora://${song?.album.cover}`}
+                          src={getSongCoverUrl(song.album?.cover)}
                           fill
                           priority={true}
                           className="object-cover object-center"
@@ -371,8 +559,10 @@ export const Player = () => {
                       </div>
                     </Link>
                   </ContextMenuTrigger>
+
+                  {/* Song context menu */}
                   <ContextMenuContent className="w-64">
-                    <Link href={`/albums/${song.album.id}`}>
+                    <Link href={`/albums/${song.album?.id}`}>
                       <ContextMenuItem className="flex items-center gap-2">
                         <IconVinyl stroke={2} size={14} />
                         Go to Album
@@ -387,14 +577,11 @@ export const Player = () => {
                         {playlists.map((playlist) => (
                           <ContextMenuItem
                             key={playlist.id}
-                            onClick={() => {
-                              addSongToPlaylist(playlist.id, song.id);
-                              setIsFavourite(true);
-                            }}
+                            onClick={() =>
+                              addSongToPlaylist(playlist.id, song.id)
+                            }
                           >
-                            <p className="w-full text-nowrap gradient-mask-r-70">
-                              {playlist.name}
-                            </p>
+                            <p className="w-full truncate">{playlist.name}</p>
                           </ContextMenuItem>
                         ))}
                       </ContextMenuSubContent>
@@ -402,53 +589,66 @@ export const Player = () => {
                   </ContextMenuContent>
                 </ContextMenu>
               ) : (
-                <div className="relative min-h-[4.25rem] min-w-[4.25rem] overflow-hidden rounded-lg shadow-lg transition duration-500">
+                <div className="relative min-h-[4.25rem] min-w-[4.25rem] overflow-hidden rounded-lg shadow-lg">
                   <Image
                     alt="Album Cover"
-                    src={"/coverArt.png"}
+                    src="/coverArt.png"
                     fill
                     priority={true}
                     className="object-cover"
                   />
                 </div>
               )}
-              <div className="w-full gradient-mask-r-70">
-                <p className="text-nowrap text-sm font-medium">
+
+              {/* Song title and artist */}
+              <div className="w-full">
+                <p className="truncate text-sm font-medium">
                   {song ? song.name : "Echoes of Emptiness"}
                 </p>
-                <p className="text-nowrap opacity-50">
-                  {song ? song.artist : "The Void Ensemble"}
-                </p>
+                <Link
+                  href={
+                    song ? `/artists/${encodeURIComponent(song.artist)}` : "#"
+                  }
+                  onClick={(e) => {
+                    if (!song) return;
+                    e.preventDefault();
+                    // Use router to navigate without stopping song playback
+                    const router = require("next/router").default;
+                    router.push(`/artists/${encodeURIComponent(song.artist)}`);
+                  }}
+                >
+                  <p className="cursor-pointer truncate opacity-50 hover:underline hover:opacity-80">
+                    {song ? song.artist : "The Void Ensemble"}
+                  </p>
+                </Link>
               </div>
             </div>
 
-            <div className="absolute left-0 right-0 mx-auto flex h-full w-2/4 flex-col gap-4 items-center justify-between">
-              <div className="flex items-center w-full gap-8 justify-center h-full">
+            {/* Center - Playback controls */}
+            <div className="absolute left-0 right-0 mx-auto flex h-full w-2/4 flex-col items-center justify-between gap-4">
+              {/* Playback buttons */}
+              <div className="flex h-full w-full items-center justify-center gap-8">
+                {/* Shuffle button */}
                 <Button
                   variant="ghost"
-                  asChild
+                  onClick={toggleShuffle}
                   className="relative !opacity-100"
                 >
-                  <Button
-                    variant="ghost"
-                    className="relative !opacity-100"
-                    onClick={() => toggleShuffle()}
-                    asChild
-                  >
-                    {!shuffle ? (
-                      <IconArrowsShuffle2
-                        stroke={2}
-                        size={16}
-                        className="!opacity-30 hover:!opacity-100"
-                      />
-                    ) : (
-                      <div>
-                        <IconArrowsShuffle2 stroke={2} size={16} />
-                        <div className="absolute -top-2 left-0 right-0 mx-auto h-[1.5px] w-2/3 rounded-full bg-black dark:bg-white"></div>
-                      </div>
-                    )}
-                  </Button>
+                  {!shuffle ? (
+                    <IconArrowsShuffle2
+                      stroke={2}
+                      size={16}
+                      className="!opacity-30 hover:!opacity-100"
+                    />
+                  ) : (
+                    <div>
+                      <IconArrowsShuffle2 stroke={2} size={16} />
+                      <div className="absolute -top-2 left-0 right-0 mx-auto h-[1.5px] w-2/3 rounded-full bg-black dark:bg-white"></div>
+                    </div>
+                  )}
                 </Button>
+
+                {/* Previous track button */}
                 <Button variant="ghost" onClick={previousSong}>
                   <IconPlayerSkipBack
                     stroke={2}
@@ -456,6 +656,8 @@ export const Player = () => {
                     size={15}
                   />
                 </Button>
+
+                {/* Play/pause button */}
                 <Button variant="ghost" onClick={handlePlayPause}>
                   {!isPlaying ? (
                     <IconPlayerPlay
@@ -469,17 +671,20 @@ export const Player = () => {
                     />
                   )}
                 </Button>
+
+                {/* Next track button */}
                 <Button variant="ghost" onClick={nextSong}>
                   <IconPlayerSkipForward
                     stroke={2}
                     className="h-4 w-4 fill-black dark:fill-white"
                   />
                 </Button>
+
+                {/* Repeat button */}
                 <Button
                   variant="ghost"
+                  onClick={toggleRepeat}
                   className="relative !opacity-100"
-                  onClick={() => toggleRepeat()}
-                  asChild
                 >
                   {!repeat ? (
                     <IconRepeat
@@ -494,7 +699,9 @@ export const Player = () => {
                     </div>
                   )}
                 </Button>
-                {metadata && metadata.format.lossless && (
+
+                {/* Lossless indicator */}
+                {metadata?.format?.lossless && (
                   <div className="absolute left-36">
                     <Tooltip delayDuration={0}>
                       <TooltipTrigger>
@@ -509,43 +716,39 @@ export const Player = () => {
                     </Tooltip>
                   </div>
                 )}
+
+                {/* Favorite button */}
                 <div className="absolute right-36">
                   <Tooltip delayDuration={0}>
                     <TooltipTrigger>
                       <Button
                         variant="ghost"
                         className="!opacity-100"
-                        onClick={() => {
-                          toggleFavourite(song?.id);
-                        }}
-                        asChild
+                        onClick={() => toggleFavourite(song?.id)}
+                        disabled={!song}
                       >
                         <IconHeart
                           stroke={2}
-                          className={
-                            `${isFavourite ? "fill-red-500" : "fill-none"}` +
-                            " w-3.5 text-red-500"
-                          }
+                          className={`w-3.5 text-red-500 ${isFavourite ? "fill-red-500" : "fill-none"}`}
                         />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="right" sideOffset={25}>
-                      <p className="delay-500">
+                      <p>
                         {!isFavourite
-                          ? "Add to Favourites"
-                          : "Remove from Favourites"}
+                          ? "Add to Favorites"
+                          : "Remove from Favorites"}
                       </p>
                     </TooltipContent>
                   </Tooltip>
                 </div>
               </div>
-              <div className="relative h-full items-center flex w-96 px-4">
-                <p className="absolute -left-8">
-                  {convertTime(soundRef.current?.seek() || 0)}
-                </p>
+
+              {/* Seek slider */}
+              <div className="relative flex h-full w-96 items-center px-4">
+                <p className="absolute -left-8">{convertTime(seekPosition)}</p>
                 <Slider
-                  defaultValue={[0]}
-                  value={[soundRef.current?.seek() || 0]}
+                  value={[seekPosition]}
                   onValueChange={handleSeek}
                   max={soundRef.current?.duration() || 0}
                   step={0.01}
@@ -555,7 +758,10 @@ export const Player = () => {
                 </p>
               </div>
             </div>
+
+            {/* Right side - Volume and additional controls */}
             <div className="absolute right-0 flex w-1/4 items-center justify-end gap-10">
+              {/* Volume controls */}
               <div className="flex items-center gap-4">
                 <Button
                   variant="ghost"
@@ -578,97 +784,109 @@ export const Player = () => {
                 </Button>
                 <Slider
                   onValueChange={handleVolume}
-                  defaultValue={[volume]}
+                  value={[volume]}
                   max={1}
                   step={0.01}
                   className="w-24"
                 />
               </div>
+
+              {/* Additional controls */}
               <div className="flex items-center gap-4">
+                {/* Lyrics button */}
                 {lyrics ? (
                   <Button variant="ghost" onClick={toggleLyrics}>
                     <IconMessage stroke={2} size={15} />
                   </Button>
                 ) : (
-                  <IconMessage className="text-red-500 opacity-75 cursor-not-allowed" stroke={2} size={15} />
+                  <IconMessage
+                    className="cursor-not-allowed text-red-500 opacity-75"
+                    stroke={2}
+                    size={15}
+                  />
                 )}
+
+                {/* Track info dialog */}
                 <Dialog>
-                  {song ? (
-                    <DialogTrigger className="opacity-30 duration-500 hover:opacity-100">
-                      <IconInfoCircle stroke={2} size={15} />
-                    </DialogTrigger>
-                  ) : (
-                    <IconInfoCircle className="text-red-500 opacity-75 cursor-not-allowed" stroke={2} size={15} />
-                  )}
-                  <DialogContent>
-                    <div className="flex h-full w-full items-start gap-6 overflow-hidden gradient-mask-r-70">
-                      <div className="jusitfy-between flex h-full w-full flex-col gap-4">
-                        <DialogHeader>
-                          <DialogTitle>Track Information</DialogTitle>
-                          <DialogDescription>
-                            All the deets for your currently playing song.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="flex gap-4 overflow-hidden text-xs">
-                          <div className="h-full">
-                            <div className="relative h-36 w-36 overflow-hidden rounded-xl">
-                              <Image
-                                alt="album"
-                                src={`wora://${song?.album.cover}` || "/coverArt.png"}
-                                fill
-                                className="object-cover"
-                                quality={25}
-                              />
-                            </div>
-                          </div>
-                          <div className="flex h-full w-full flex-col gap-0.5">
-                            <p className="mb-4 text-nowrap">
-                              → {metadata && metadata.common.title} [
-                              {metadata && metadata.format.codec}]
-                            </p>
-                            <p className="text-nowrap">
-                              <span className="opacity-50">Artist:</span>{" "}
-                              {metadata && metadata.common.artist}
-                            </p>
-                            <p className="text-nowrap">
-                              <span className="opacity-50">Album:</span>{" "}
-                              {metadata && metadata.common.album}
-                            </p>
-                            <p className="text-nowrap">
-                              <span className="opacity-50">Codec:</span>{" "}
-                              {metadata && metadata.format.codec}
-                            </p>
-                            {metadata && metadata.format.lossless ? (
-                              <p className="text-nowrap">
-                                <span className="opacity-50">Sample:</span>{" "}
-                                Lossless [
-                                {metadata && metadata.format.bitsPerSample}/
-                                {metadata &&
-                                  (metadata.format.sampleRate / 1000).toFixed(
-                                    1,
-                                  )}
-                                kHz]
-                              </p>
-                            ) : (
-                              <p className="text-nowrap">
-                                <span className="opacity-50">Sample:</span>{" "}
-                                Lossy Audio
-                              </p>
-                            )}
-                            <p className="text-nowrap">
-                              <span className="opacity-50">Duration:</span>{" "}
-                              {convertTime(soundRef.current?.duration())}
-                            </p>
-                            <p className="text-nowrap">
-                              <span className="opacity-50">Genre:</span>{" "}
-                              {(metadata && metadata.common.genre) || "Unknown"}
-                            </p>
+                  <DialogTrigger
+                    className={
+                      song
+                        ? "opacity-30 duration-500 hover:opacity-100"
+                        : "cursor-not-allowed text-red-500 opacity-75"
+                    }
+                    disabled={!song}
+                  >
+                    <IconInfoCircle stroke={2} size={15} />
+                  </DialogTrigger>
+
+                  {song && (
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Track Information</DialogTitle>
+                        <DialogDescription>
+                          Details for your currently playing song
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="flex gap-4 overflow-hidden text-xs">
+                        {/* Album cover */}
+                        <div className="h-full">
+                          <div className="relative h-36 w-36 overflow-hidden rounded-xl">
+                            <Image
+                              alt={song.name || "Album"}
+                              src={getSongCoverUrl(song.album?.cover)}
+                              fill
+                              className="object-cover"
+                              quality={25}
+                            />
                           </div>
                         </div>
+
+                        {/* Track details */}
+                        <div className="flex h-full w-full flex-col gap-0.5">
+                          <p className="mb-4 truncate">
+                            → {metadata?.common?.title} [
+                            {metadata?.format?.codec || "Unknown"}]
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Artist:</span>{" "}
+                            {metadata?.common?.artist || "Unknown"}
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Album:</span>{" "}
+                            {metadata?.common?.album || "Unknown"}
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Codec:</span>{" "}
+                            {metadata?.format?.codec || "Unknown"}
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Sample:</span>{" "}
+                            {metadata?.format?.lossless
+                              ? `Lossless [${metadata.format.bitsPerSample}/${(metadata.format.sampleRate / 1000).toFixed(1)}kHz]`
+                              : "Lossy Audio"}
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Duration:</span>{" "}
+                            {convertTime(soundRef.current?.duration() || 0)}
+                          </p>
+
+                          <p className="truncate">
+                            <span className="opacity-50">Genre:</span>{" "}
+                            {metadata?.common?.genre?.[0] || "Unknown"}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  </DialogContent>
+                    </DialogContent>
+                  )}
                 </Dialog>
+
+                {/* Queue button */}
                 <Button variant="ghost" onClick={toggleQueue}>
                   <IconList stroke={2} size={15} />
                 </Button>

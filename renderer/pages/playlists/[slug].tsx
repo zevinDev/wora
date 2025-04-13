@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "components/ui/input";
+import { Input } from "@/components/ui/input";
 import {
   Form,
   FormControl,
@@ -34,6 +34,7 @@ import { z } from "zod";
 import Songs from "@/components/ui/songs";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 
+// Form validation schema
 const formSchema = z.object({
   name: z.string().min(2, {
     message: "Playlist name must be at least 2 characters.",
@@ -41,12 +42,13 @@ const formSchema = z.object({
   description: z.string().optional(),
 });
 
+// Playlist type definition
 type Playlist = {
   id: number;
   name: string;
   description: string;
   cover: string;
-  songs: any;
+  songs: any[];
 };
 
 export default function Playlist() {
@@ -55,92 +57,25 @@ export default function Playlist() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const { setQueueAndPlay } = usePlayer();
-
-  useEffect(() => {
-    if (!router.query.slug) return;
-    window.ipc
-      .invoke("getPlaylistWithSongs", router.query.slug)
-      .then((response) => {
-        setPlaylist(response);
-      });
-  }, [router.query.slug]);
-
-  const playPlaylist = () => {
-    if (playlist) {
-      setQueueAndPlay(playlist.songs, 0);
-    }
-  };
-
-  const playPlaylistAndShuffle = () => {
-    if (playlist) {
-      setQueueAndPlay(playlist.songs, 0, true);
-    }
-  };
-
-  const removeSongFromPlaylist = (songId: number) => {
-    window.ipc
-      .invoke("removeSongFromPlaylist", {
-        playlistId: playlist.id,
-        songId,
-      })
-      .then((response) => {
-        if (response) {
-          toast(
-            <div className="flex w-fit items-center gap-2 text-xs">
-              <IconCheck className="text-green-400" stroke={2} size={16} />
-              Song removed from playlist.
-            </div>,
-          );
-
-          window.ipc
-            .invoke("getPlaylistWithSongs", router.query.slug)
-            .then((response) => {
-              setPlaylist(response);
-            });
-        }
-      });
-  };
-
-  const toRenderAdditionalMenuItems = (song: any) => (
-    <>
-      <ContextMenuItem
-        className="flex items-center gap-2"
-        onClick={() => removeSongFromPlaylist(song.id)}
-      >
-        <IconX stroke={2} size={14} />
-        Remove from Playlist
-      </ContextMenuItem>
-    </>
-  );
-
-  const updatePlaylist = (data: z.infer<typeof formSchema>) => {
-    setLoading(true);
-    window.ipc
-      .invoke("updatePlaylist", { id: playlist.id, data })
-      .then((response) => {
-        if (response) {
-          window.ipc
-            .invoke("getPlaylistWithSongs", router.query.slug)
-            .then((response) => {
-              setPlaylist(response);
-            });
-          setDialogOpen(false);
-          setLoading(false);
-          toast(
-            <div className="flex w-fit items-center gap-2 text-xs">
-              <IconCheck className="text-green-400" stroke={2} size={16} />
-              Your playlist is now updated.
-            </div>,
-          );
-        }
-      })
-      .catch(() => setLoading(false));
-  };
-
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
   });
 
+  // Reset scroll position when the component mounts or route changes
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.scrollTo(0, 0);
+    }
+  }, [router.asPath]);
+
+  // Load playlist data when the slug changes
+  useEffect(() => {
+    if (!router.query.slug) return;
+
+    fetchPlaylistData();
+  }, [router.query.slug]);
+
+  // Update form values when playlist data changes
   useEffect(() => {
     if (playlist) {
       form.reset({
@@ -148,35 +83,138 @@ export default function Playlist() {
         description: playlist.description,
       });
     }
-  }, [playlist]);
+  }, [playlist, form]);
+
+  const fetchPlaylistData = async () => {
+    try {
+      const response = await window.ipc.invoke(
+        "getPlaylistWithSongs",
+        router.query.slug,
+      );
+      setPlaylist(response);
+    } catch (error) {
+      console.error("Error fetching playlist:", error);
+      toast(
+        <div className="flex w-fit items-center gap-2 text-xs">
+          <IconX className="text-red-500" stroke={2} size={16} />
+          Failed to load playlist
+        </div>,
+      );
+    }
+  };
+
+  const playPlaylist = (shuffle = false) => {
+    if (!playlist?.songs?.length) return;
+
+    setQueueAndPlay(playlist.songs, 0, shuffle);
+  };
+
+  const removeSongFromPlaylist = async (songId: number) => {
+    if (!playlist) return;
+
+    try {
+      const response = await window.ipc.invoke("removeSongFromPlaylist", {
+        playlistId: playlist.id,
+        songId,
+      });
+
+      if (response) {
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconCheck className="text-green-400" stroke={2} size={16} />
+            Song removed from playlist
+          </div>,
+        );
+
+        // Refresh playlist data
+        fetchPlaylistData();
+      }
+    } catch (error) {
+      console.error("Error removing song:", error);
+    }
+  };
+
+  const updatePlaylist = async (data: z.infer<typeof formSchema>) => {
+    if (!playlist) return;
+
+    setLoading(true);
+
+    try {
+      const response = await window.ipc.invoke("updatePlaylist", {
+        id: playlist.id,
+        data,
+      });
+
+      if (response) {
+        await fetchPlaylistData();
+        setDialogOpen(false);
+
+        toast(
+          <div className="flex w-fit items-center gap-2 text-xs">
+            <IconCheck className="text-green-400" stroke={2} size={16} />
+            Playlist updated successfully
+          </div>,
+        );
+      }
+    } catch (error) {
+      console.error("Error updating playlist:", error);
+      toast(
+        <div className="flex w-fit items-center gap-2 text-xs">
+          <IconX className="text-red-500" stroke={2} size={16} />
+          Failed to update playlist
+        </div>,
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Additional menu items for the song context menu
+  const renderContextMenuItems = (song: any) => (
+    <ContextMenuItem
+      className="flex items-center gap-2"
+      onClick={() => removeSongFromPlaylist(song.id)}
+    >
+      <IconX stroke={2} size={14} />
+      Remove from Playlist
+    </ContextMenuItem>
+  );
+
+  // Show loading or empty state if no playlist
+  if (!playlist) {
+    return (
+      <div className="flex h-[50vh] w-full items-center justify-center">
+        <Spinner className="h-6 w-6" />
+      </div>
+    );
+  }
 
   return (
     <>
+      {/* Playlist header */}
       <div className="relative h-96 w-full overflow-hidden rounded-2xl">
-        {playlist && playlist.id === 1 ? (
+        {playlist.id === 1 ? (
           <div className="h-full w-full bg-red-500 gradient-mask-b-10"></div>
         ) : (
           <Image
-            alt={playlist ? playlist.name : "Album Cover"}
-            src={
-              playlist && playlist.cover
-                ? "wora://" + playlist.cover
-                : "/coverArt.png"
-            }
+            alt={playlist.name}
+            src={playlist.cover ? "wora://" + playlist.cover : "/coverArt.png"}
             fill
             loading="lazy"
             className="object-cover object-center blur-xl gradient-mask-b-10"
           />
         )}
+
         <div className="absolute bottom-6 left-6">
           <div className="flex items-end gap-4">
-            <div className="relative h-52 w-52 overflow-hidden rounded-xl shadow-lg transition duration-300">
+            {/* Album cover */}
+            <div className="relative h-52 w-52 overflow-hidden rounded-xl shadow-lg">
               <Image
-                alt={playlist ? playlist.name : "Album Cover"}
+                alt={playlist.name}
                 src={
-                  playlist && playlist.id === 1
+                  playlist.id === 1
                     ? "/favouritesCoverArt.png"
-                    : playlist && playlist.cover
+                    : playlist.cover
                       ? "wora://" + playlist.cover
                       : "/coverArt.png"
                 }
@@ -185,17 +223,18 @@ export default function Playlist() {
                 className="scale-[1.01] object-cover"
               />
             </div>
+
+            {/* Playlist info and actions */}
             <div className="flex flex-col gap-4">
               <div>
-                <h1 className="text-2xl font-medium">
-                  {playlist && playlist.name}
-                </h1>
+                <h1 className="text-2xl font-medium">{playlist.name}</h1>
                 <p className="flex items-center gap-2 text-sm">
-                  {playlist && playlist.description}
+                  {playlist.description}
                 </p>
               </div>
+
               <div className="flex gap-2">
-                <Button onClick={playPlaylist} className="w-fit">
+                <Button onClick={() => playPlaylist(false)} className="w-fit">
                   <IconPlayerPlay
                     className="fill-black dark:fill-white"
                     stroke={2}
@@ -203,10 +242,12 @@ export default function Playlist() {
                   />{" "}
                   Play
                 </Button>
-                <Button className="w-fit" onClick={playPlaylistAndShuffle}>
+
+                <Button className="w-fit" onClick={() => playPlaylist(true)}>
                   <IconArrowsShuffle2 stroke={2} size={16} /> Shuffle
                 </Button>
-                {playlist && playlist.id !== 1 && (
+
+                {playlist.id !== 1 && (
                   <Button className="w-fit" onClick={() => setDialogOpen(true)}>
                     <IconStar stroke={2} size={16} /> Edit
                   </Button>
@@ -216,78 +257,87 @@ export default function Playlist() {
           </div>
         </div>
       </div>
+
+      {/* Song list */}
       <div className="pt-2">
         <Songs
-          library={playlist?.songs}
-          renderAdditionalMenuItems={toRenderAdditionalMenuItems}
+          library={playlist.songs}
+          renderAdditionalMenuItems={renderContextMenuItems}
         />
       </div>
+
+      {/* Edit playlist dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
-          <div className="flex h-full w-full items-start gap-6">
-            <div className="jusitfy-between flex h-full w-full flex-col gap-4">
-              <DialogHeader>
-                <DialogTitle>Update Playlist</DialogTitle>
-                <DialogDescription>
-                  Update your existing playlist.
-                </DialogDescription>
-              </DialogHeader>
-              <Form {...form}>
-                <form
-                  onSubmit={form.handleSubmit(updatePlaylist)}
-                  className="flex gap-4 text-xs"
+          <DialogHeader>
+            <DialogTitle>Update Playlist</DialogTitle>
+            <DialogDescription>Update your existing playlist</DialogDescription>
+          </DialogHeader>
+
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(updatePlaylist)}
+              className="flex gap-4 text-xs"
+            >
+              {/* Album cover */}
+              <div>
+                <div className="relative h-36 w-36 overflow-hidden rounded-xl">
+                  <Image
+                    alt="album"
+                    src={
+                      playlist.cover
+                        ? "wora://" + playlist.cover
+                        : "/coverArt.png"
+                    }
+                    fill
+                    className="object-cover"
+                  />
+                </div>
+              </div>
+
+              {/* Form inputs */}
+              <div className="flex h-full w-full flex-col items-end gap-4">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem className="w-full">
+                      <FormControl>
+                        <Input placeholder="Name" {...field} />
+                      </FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem className="w-full">
+                      <FormControl>
+                        <Input placeholder="Description" {...field} />
+                      </FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                  )}
+                />
+
+                <Button
+                  className="w-fit justify-between text-xs"
+                  type="submit"
+                  disabled={loading}
                 >
-                  <div className="h-full">
-                    <div className="relative h-36 w-36 overflow-hidden rounded-xl">
-                      <Image
-                        alt="album"
-                        src="/coverArt.png"
-                        fill
-                        className="object-cover"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex h-full w-full flex-col items-end gap-4">
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem className="w-full">
-                          <FormControl>
-                            <Input placeholder="Name" {...field} />
-                          </FormControl>
-                          <FormMessage className="text-xs" />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="description"
-                      render={({ field }) => (
-                        <FormItem className="w-full">
-                          <FormControl>
-                            <Input placeholder="Description" {...field} />
-                          </FormControl>
-                          <FormMessage className="text-xs" />
-                        </FormItem>
-                      )}
-                    />
-                    <Button
-                      className="w-fit justify-between text-xs"
-                      type="submit"
-                    >
-                      Update Playlist
-                      {loading ? (
-                        <Spinner className="h-3.5 w-3.5" />
-                      ) : (
-                        <IconArrowRight stroke={2} className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                </form>
-              </Form>
-            </div>
-          </div>
+                  Update Playlist
+                  {loading ? (
+                    <Spinner className="h-3.5 w-3.5" />
+                  ) : (
+                    <IconArrowRight stroke={2} className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
     </>

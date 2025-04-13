@@ -5,23 +5,32 @@ import { IconArrowRight } from "@tabler/icons-react";
 import { useRouter } from "next/router";
 import Spinner from "@/components/ui/spinner";
 import { useState } from "react";
+import { toast } from "sonner";
 
 export default function Setup() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const handleClick = () => {
+  const handleSelectMusicFolder = () => {
     setLoading(true);
+
     window.ipc
       .invoke("scanLibrary", true)
       .then((response) => {
-        if (response) {
+        if (response?.canceled) {
+          // User canceled folder selection
           setLoading(false);
           return;
         }
+
+        // Successfully set up music folder, redirect to home
         router.push("/home");
       })
-      .catch(() => setLoading(false));
+      .catch((error) => {
+        console.error("Error setting up music folder:", error);
+        toast("Failed to set up music folder. Please try again.");
+        setLoading(false);
+      });
   };
 
   return (
@@ -50,8 +59,9 @@ export default function Setup() {
             </div>
           </div>
           <Button
-            className="absolute bottom-8 left-8 w-fit justify-between"
-            onClick={handleClick}
+            className="w-fit justify-between px-6 py-5 text-sm"
+            onClick={handleSelectMusicFolder}
+            disabled={loading}
           >
             Select Music Folder
             {loading ? (

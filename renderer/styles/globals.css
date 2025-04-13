@@ -27,6 +27,57 @@
     scrollbar-width: none; /* Firefox */
 }
 
+.draggable-region {
+    -webkit-app-region: drag;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(100% - 90px); /* 90px is the aprox width of the buttons */
+    height: 30px;
+    background: #00000000;
+    z-index: 1000;
+  }
+
+.non-draggable {
+    -webkit-app-region: no-drag;
+}
+
 html {
     overscroll-behavior: none;
+}
+
+/* Page transition animations */
+.page-transition {
+    transition: opacity 300ms ease, transform 300ms ease;
+    will-change: opacity, transform;
+}
+
+.fade-in {
+    animation: fadeIn 300ms ease forwards;
+}
+
+.fade-out {
+    animation: fadeOut 300ms ease forwards;
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeOut {
+    from { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to { 
+        opacity: 0;
+        transform: translateY(-10px);
+    }
 }
