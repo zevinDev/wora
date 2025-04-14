@@ -120,14 +120,20 @@ const Navbar = () => {
   // Handle navigation with page state reset when clicking active page
   const handleNavigation = useCallback(
     (href: string, e: React.MouseEvent) => {
-      // If we're already on this page, prevent default navigation and reset page state
+      // If we're on this exact page or a subpage of it
       if (isActive(href)) {
         e.preventDefault();
 
         // Scroll to top
         window.scrollTo(0, 0);
 
-        // Reset page state based on the route
+        // If we're on a subpath (e.g., /albums/[slug]), navigate to the main path
+        if (router.pathname !== href) {
+          router.push(href);
+          return;
+        }
+
+        // If we're already on the exact page, just reset state
         if (href === "/albums") {
           // Reset albums page state
           window.ipc.send("resetAlbumsPageState", null);
@@ -142,7 +148,7 @@ const Navbar = () => {
           window.ipc.send("resetHomePageState", null);
         }
 
-        // Re-route to the same page to refresh components
+        // Re-route to refresh the page components
         router.replace(router.asPath);
       }
     },
