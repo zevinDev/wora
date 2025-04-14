@@ -36,6 +36,18 @@ import { Client } from "@xhayper/discord-rpc";
 import { eq, sql } from "drizzle-orm";
 import { albums } from "./helpers/db/schema";
 import { initializeLastFmHandlers } from "./helpers/lastfm-service";
+import * as electronLog from "electron-log";
+
+// Configure application logging for production
+electronLog.transports.file.level = "info";
+const logger = electronLog.default;
+
+// Log application startup
+logger.info(`Wora starting up - ${new Date().toISOString()}`);
+logger.info(`Node environment: ${process.env.NODE_ENV}`);
+logger.info(`Electron version: ${process.versions.electron}`);
+logger.info(`Chrome version: ${process.versions.chrome}`);
+logger.info(`OS: ${process.platform} ${process.arch}`);
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -45,8 +57,10 @@ if (process.platform === "win32") {
 }
 
 if (isProd) {
+  logger.info("Running in production mode");
   serve({ directory: "app" });
 } else {
+  logger.info("Running in development mode");
   app.setPath("userData", `${app.getPath("userData")}`);
 }
 

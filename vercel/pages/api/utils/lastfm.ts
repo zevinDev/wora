@@ -5,9 +5,11 @@ import { LASTFM_CONFIG } from "../config";
  * Generate MD5 hash for password authentication
  */
 export const getMD5Auth = (username: string, password: string): string => {
+  // Last.fm expects: md5(username + md5(password))
+  const passwordHash = crypto.createHash("md5").update(password).digest("hex");
   return crypto
     .createHash("md5")
-    .update(username + crypto.createHash("md5").update(password).digest("hex"))
+    .update(username.toLowerCase() + passwordHash)
     .digest("hex");
 };
 

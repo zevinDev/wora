@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { LASTFM_CONFIG } from "../config";
-import { createFormData, getMD5Auth, generateSignature } from "../utils/lastfm";
+import { createFormData, generateSignature } from "../utils/lastfm";
+import * as crypto from "crypto";
 
 export default async function handler(
   req: NextApiRequest,
@@ -23,25 +24,31 @@ export default async function handler(
       });
     }
 
-    // Step 1: Get authentication token
-    const authToken = getMD5Auth(username, password);
+    // For Last.fm's auth.getMobileSession:
+    // According to the API docs: http://www.last.fm/api/mobileauth
 
-    // Step 2: Get mobile session (Password flow is used for desktop apps)
-    const params = {
+    // Set up the parameters for the API request
+    const params: Record<string, string> = {
       method: "auth.getMobileSession",
       username: username,
-      password: password,
+      password: password, // Last.fm expects the plaintext password
       api_key: LASTFM_CONFIG.API_KEY,
     };
 
-    // Add API signature for authenticated requests
-    params["api_sig"] = generateSignature(params);
-    params["format"] = "json";
+    // Generate signature
+    params.api_sig = generateSignature(params);
+    params.format = "json";
 
     // Create form data
     const formData = createFormData(params);
 
     // Make the request
+    console.log("Making Last.fm auth request with params:", {
+      ...params,
+      password: "[HIDDEN]", // Don't log the password
+      api_sig: "[SIGNATURE]", // Don't log the full signature
+    });
+
     const response = await fetch(LASTFM_CONFIG.API_URL, {
       method: "POST",
       headers: {
@@ -53,6 +60,7 @@ export default async function handler(
     const data = await response.json();
 
     if (data.error) {
+      console.error("Last.fm auth error:", data);
       return res.status(400).json({
         success: false,
         error: `Last.fm error ${data.error}: ${data.message}`,

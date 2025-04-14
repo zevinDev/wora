@@ -194,16 +194,9 @@ export const Player = () => {
       lastFmStatus.isScrobbled ||
       !isAuthenticated()
     ) {
-      console.log("[Last.fm] Skipping scrobble check", {
-        hasSong: !!song,
-        enabledLastFm: lastFmSettings.enableLastFm,
-        alreadyScrobbled: lastFmStatus.isScrobbled,
-        isAuthenticated: isAuthenticated(),
-      });
+      // Skip scrobble checks without verbose logging
       return;
     }
-
-    console.log("[Last.fm] Starting scrobble timer");
 
     // Clear existing timer if any
     if (scrobbleTimeout.current) {
@@ -218,9 +211,12 @@ export const Player = () => {
       const currentPosition = soundRef.current.seek();
       const playedPercentage = (currentPosition / duration) * 100;
 
-      console.log(
-        `[Last.fm] Current playback position: ${playedPercentage.toFixed(1)}%, threshold: ${lastFmSettings.scrobbleThreshold}%`,
-      );
+      // Only log in development
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `[Last.fm] Position: ${playedPercentage.toFixed(1)}%, threshold: ${lastFmSettings.scrobbleThreshold}%`,
+        );
+      }
 
       if (playedPercentage >= lastFmSettings.scrobbleThreshold) {
         // Clear the interval immediately to prevent multiple scrobbles
@@ -232,14 +228,20 @@ export const Player = () => {
         // Set scrobbled status immediately to prevent race conditions
         setLastFmStatus((prev) => ({ ...prev, isScrobbled: true }));
 
+        // Minimal logging for production, log to file only for important events
+        try {
+          window.ipc.send("lastfm:log", {
+            level: "info",
+            message: `Scrobbling track: ${song.artist} - ${song.name} (${playedPercentage.toFixed(1)}%)`,
+          });
+        } catch (err) {
+          // Silent error in production
+        }
+
         // Scrobble the track
-        console.log("[Last.fm] Threshold reached, scrobbbling track");
         scrobbleTrack(song)
           .then((success) => {
-            if (success) {
-              console.log("[Last.fm] Successfully scrobbled:", song.name);
-            } else {
-              console.error("[Last.fm] Failed to scrobble track");
+            if (!success) {
               setLastFmStatus((prev) => ({
                 ...prev,
                 error: "Failed to scrobble track",
@@ -248,7 +250,16 @@ export const Player = () => {
             }
           })
           .catch((err) => {
-            console.error("[Last.fm] Scrobble error:", err);
+            // Log only the error message, not the entire error object
+            try {
+              window.ipc.send("lastfm:log", {
+                level: "error",
+                message: `Scrobble error: ${err?.message || "Unknown error"}`,
+              });
+            } catch (logErr) {
+              // Silent fail in production
+            }
+
             setLastFmStatus((prev) => ({
               ...prev,
               error: "Error scrobbling track",
@@ -258,7 +269,7 @@ export const Player = () => {
       }
     };
 
-    // Set timer to check scrobble threshold only once
+    // Set timer to check scrobble threshold
     const checkInterval = 2000; // Check every 2 seconds
     scrobbleTimeout.current = setInterval(
       scrobbleIfThresholdReached,

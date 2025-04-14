@@ -3,12 +3,36 @@ import fetch from "node-fetch";
 import * as crypto from "crypto";
 import * as path from "path";
 import * as fs from "fs";
+import * as electronLog from "electron-log";
 
-// Debug logging
-const enableDebug = true;
-const logLastFm = (message: string, data?: any) => {
-  if (enableDebug) {
-    console.log(`[LastFm Service] ${message}`, data || "");
+// Configure a simplified log file for Last.fm related issues
+const lastFmLogger = electronLog.create({ logId: "lastfm" });
+lastFmLogger.transports.file.fileName = "lastfm.log";
+lastFmLogger.transports.file.level = "info"; // Change from debug to info to reduce verbosity
+
+// Simplified logging function with log levels
+const logLastFm = (
+  message: string,
+  data?: any,
+  level: "info" | "error" | "warn" = "info",
+) => {
+  // Only stringify data when actually needed
+  const shouldLogToConsole = process.env.NODE_ENV !== "production";
+
+  // Log to file with appropriate level
+  switch (level) {
+    case "error":
+      lastFmLogger.error(message, data);
+      if (shouldLogToConsole) console.error(`[LastFm] ${message}`, data || "");
+      break;
+    case "warn":
+      lastFmLogger.warn(message, data);
+      if (shouldLogToConsole) console.warn(`[LastFm] ${message}`, data || "");
+      break;
+    default:
+      // Only log info messages to file in production, not to console
+      lastFmLogger.info(message, data);
+      if (shouldLogToConsole) console.log(`[LastFm] ${message}`, data || "");
   }
 };
 
@@ -19,37 +43,30 @@ const API_URL = "https://ws.audioscrobbler.com/2.0/";
 const loadEnvVariables = () => {
   try {
     const envPath = path.join(process.cwd(), ".env.local");
+    if (!fs.existsSync(envPath)) return false;
 
-    if (fs.existsSync(envPath)) {
-      logLastFm(`Loading environment variables from ${envPath}`);
-      const envContent = fs.readFileSync(envPath, "utf-8");
-      const envLines = envContent.split("\n");
+    logLastFm(`Loading environment variables from ${envPath}`);
+    const envContent = fs.readFileSync(envPath, "utf-8");
 
-      envLines.forEach((line) => {
-        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-        if (match) {
-          const key = match[1];
-          let value = match[2] || "";
-
-          // Remove quotes if present
-          if (
-            value.length > 0 &&
-            value.charAt(0) === '"' &&
-            value.charAt(value.length - 1) === '"'
-          ) {
-            value = value.replace(/^"|"$/g, "");
-          }
-
-          process.env[key] = value;
-          logLastFm(`Loaded environment variable: ${key}`);
+    // Process environment variables
+    envContent.split("\n").forEach((line) => {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1];
+        let value = match[2] || "";
+        if (
+          value.length > 0 &&
+          value.charAt(0) === '"' &&
+          value.charAt(value.length - 1) === '"'
+        ) {
+          value = value.replace(/^"|"$/g, "");
         }
-      });
-
-      return true;
-    }
-    return false;
+        process.env[key] = value;
+      }
+    });
+    return true;
   } catch (error) {
-    logLastFm("Error loading environment variables:", error);
+    logLastFm("Error loading environment variables", error, "error");
     return false;
   }
 };
@@ -63,40 +80,29 @@ if (process.env.NODE_ENV !== "production") {
 const DEV_API_KEY = process.env.LASTFM_API_KEY || "";
 const DEV_API_SECRET = process.env.LASTFM_API_SECRET || "";
 
-// Log API key status
+// Log API key status only in development
 if (process.env.NODE_ENV !== "production") {
   if (!DEV_API_KEY || !DEV_API_SECRET) {
     logLastFm(
-      "WARNING: Last.fm API credentials not found in environment variables.",
+      "WARNING: Last.fm API credentials not found in environment variables",
+      null,
+      "warn",
     );
-    logLastFm(
-      "Please add LASTFM_API_KEY and LASTFM_API_SECRET to your .env.local file.",
-    );
-  } else {
-    logLastFm("Last.fm API credentials loaded from environment variables.");
   }
 }
 
 // Should we use embedded API keys or the backend?
-// We'll use embedded API keys in development and backend in production
 const useBackend = process.env.NODE_ENV === "production";
 
 // Get the backend URL based on environment
 const getBackendUrl = (): string => {
-  // In production, use the Vercel deployment URL
-  if (process.env.NODE_ENV === "production") {
-    return "https://wora-ten.vercel.app/";
-  }
-  // In development, try to use localhost
-  return "http://localhost:3000";
+  return process.env.NODE_ENV === "production"
+    ? "https://wora-ten.vercel.app"
+    : "http://localhost:3000";
 };
 
 /**
  * Forward Last.fm requests to the Vercel backend
- * @param endpoint The API endpoint path
- * @param method HTTP method
- * @param body Request body (for POST requests)
- * @returns Response from the backend
  */
 const forwardToBackend = async (
   endpoint: string,
@@ -104,11 +110,8 @@ const forwardToBackend = async (
   body?: any,
 ) => {
   try {
-    // Get the backend URL
     const baseUrl = getBackendUrl();
-
     const url = `${baseUrl}/api/lastfm/${endpoint}`;
-    logLastFm(`Forwarding request to: ${url}`, { method });
 
     const options: any = {
       method,
@@ -124,7 +127,7 @@ const forwardToBackend = async (
     const response = await fetch(url, options);
     return await response.json();
   } catch (error) {
-    logLastFm(`Error forwarding request to backend:`, error);
+    logLastFm("Error forwarding request to backend", error, "error");
     return {
       success: false,
       error: "Failed to communicate with the backend API",
@@ -134,7 +137,6 @@ const forwardToBackend = async (
 
 /**
  * Generate a signature for Last.fm API
- * This is used when calling Last.fm API directly in development mode
  */
 const generateSignature = (params: Record<string, string>): string => {
   // Remove format and callback parameters
@@ -160,7 +162,6 @@ const generateSignature = (params: Record<string, string>): string => {
 
 /**
  * Make a direct request to Last.fm API
- * This is used in development mode when not using the backend
  */
 const makeLastFmRequest = async (
   params: Record<string, string>,
@@ -186,7 +187,6 @@ const makeLastFmRequest = async (
 
     // Make the request
     const url = `${API_URL}?${queryString}`;
-    logLastFm(`Making direct API request: ${url}`);
 
     const response = await fetch(url, {
       method: "POST",
@@ -196,7 +196,7 @@ const makeLastFmRequest = async (
 
     // Check for errors
     if (data.error) {
-      logLastFm(`API Error ${data.error}: ${data.message}`);
+      logLastFm(`API Error ${data.error}: ${data.message}`, null, "error");
       return {
         success: false,
         error: data.message,
@@ -206,7 +206,7 @@ const makeLastFmRequest = async (
 
     return data;
   } catch (error) {
-    logLastFm("Error making Last.fm API request:", error);
+    logLastFm("Error making Last.fm API request", error, "error");
     return {
       success: false,
       error: "Error making Last.fm API request",
@@ -226,25 +226,39 @@ const getMD5Auth = (username: string, password: string): string => {
  * Initialize Last.fm IPC handlers
  */
 export const initializeLastFmHandlers = () => {
+  // Handler for log messages from renderer process - simplified to avoid duplicate logging
+  ipcMain.on("lastfm:log", (_, data) => {
+    const { level, message } = data;
+    if (!level || !message) return;
+
+    // Just pass to the right logger method
+    switch (level) {
+      case "error":
+        lastFmLogger.error(message);
+        break;
+      case "warn":
+        lastFmLogger.warn(message);
+        break;
+      default:
+        lastFmLogger.info(message);
+    }
+  });
+
   // Handle authentication requests
   ipcMain.handle(
     "lastfm:authenticate",
     async (_, username: string, password: string) => {
       try {
-        logLastFm(`Authenticating user: ${username}`);
-
         // In production, use the backend API
         if (useBackend) {
-          // Forward authentication to backend
           const response = await forwardToBackend("auth", "POST", {
             username,
             password,
           });
 
           if (!response.success) {
-            logLastFm("Authentication error:", response.error);
+            logLastFm("Authentication error", response.error, "error");
           }
-
           return response;
         }
         // In development, call Last.fm API directly
@@ -272,7 +286,7 @@ export const initializeLastFmHandlers = () => {
           };
         }
       } catch (error) {
-        logLastFm("Error in authentication:", error);
+        logLastFm("Error in authentication", error, "error");
         return {
           success: false,
           error: "Internal error during authentication",
@@ -290,17 +304,12 @@ export const initializeLastFmHandlers = () => {
         return { success: false, error: "Missing required parameters" };
       }
 
-      logLastFm(`Updating now playing: "${artist} - ${track}"`);
-
       // Use backend or direct API based on environment
       if (useBackend) {
-        // Forward now playing update to backend
         const response = await forwardToBackend("now-playing", "POST", data);
-
         if (!response.success) {
-          logLastFm("Error updating now playing:", response.error);
+          logLastFm("Error updating now playing", response.error, "error");
         }
-
         return response;
       } else {
         // Call Last.fm API directly
@@ -329,7 +338,7 @@ export const initializeLastFmHandlers = () => {
         };
       }
     } catch (error) {
-      logLastFm("Error in updateNowPlaying:", error);
+      logLastFm("Error in updateNowPlaying", error, "error");
       return {
         success: false,
         error: "Internal error updating now playing status",
@@ -337,7 +346,7 @@ export const initializeLastFmHandlers = () => {
     }
   });
 
-  // Handle track scrobbling
+  // Handle track scrobbling - simplified error handling
   ipcMain.handle("lastfm:scrobbleTrack", async (_, data) => {
     try {
       const { sessionKey, artist, track, album, timestamp, duration } = data;
@@ -346,17 +355,12 @@ export const initializeLastFmHandlers = () => {
         return { success: false, error: "Missing required parameters" };
       }
 
-      logLastFm(`Scrobbling track: "${artist} - ${track}"`);
-
       // Use backend or direct API based on environment
       if (useBackend) {
-        // Forward scrobble to backend
         const response = await forwardToBackend("scrobble", "POST", data);
-
         if (!response.success) {
-          logLastFm("Error scrobbling track:", response.error);
+          logLastFm("Error scrobbling track", response.error, "error");
         }
-
         return response;
       } else {
         // Call Last.fm API directly
@@ -386,31 +390,27 @@ export const initializeLastFmHandlers = () => {
         };
       }
     } catch (error) {
-      logLastFm("Error in scrobbleTrack:", error);
+      logLastFm("Error in scrobbleTrack", error, "error");
       return { success: false, error: "Internal error scrobbling track" };
     }
   });
 
-  // Handle get user info
+  // Handle get user info - simplified
   ipcMain.handle("lastfm:getUserInfo", async (_, username, sessionKey) => {
     try {
       if (!username) {
         return { success: false, error: "Username is required" };
       }
 
-      logLastFm(`Getting user info for: ${username}`);
-
       // Use backend or direct API based on environment
       if (useBackend) {
-        // Forward user info request to backend
         const response = await forwardToBackend(
           `user-info?username=${encodeURIComponent(username)}&sessionKey=${encodeURIComponent(sessionKey || "")}`,
         );
 
         if (!response.success) {
-          logLastFm("Error getting user info:", response.error);
+          logLastFm("Error getting user info", response.error, "error");
         }
-
         return response;
       } else {
         // Call Last.fm API directly
@@ -437,12 +437,12 @@ export const initializeLastFmHandlers = () => {
         };
       }
     } catch (error) {
-      logLastFm("Error in getUserInfo:", error);
+      logLastFm("Error in getUserInfo", error, "error");
       return { success: false, error: "Internal error getting user info" };
     }
   });
 
-  // Handle get track info
+  // Handle get track info - simplified
   ipcMain.handle("lastfm:getTrackInfo", async (_, artist, track, username) => {
     try {
       if (!artist || !track) {
@@ -459,11 +459,9 @@ export const initializeLastFmHandlers = () => {
 
         // Forward track info request to backend
         const response = await forwardToBackend(`track-info?${query}`);
-
         if (!response.success) {
-          logLastFm("Error getting track info:", response.error);
+          logLastFm("Error getting track info", response.error, "error");
         }
-
         return response;
       } else {
         // Call Last.fm API directly
@@ -491,12 +489,12 @@ export const initializeLastFmHandlers = () => {
         };
       }
     } catch (error) {
-      logLastFm("Error in getTrackInfo:", error);
+      logLastFm("Error in getTrackInfo", error, "error");
       return { success: false, error: "Internal error getting track info" };
     }
   });
 
-  // Handle love/unlove track
+  // Handle love/unlove track - simplified
   ipcMain.handle("lastfm:loveTrack", async (_, data) => {
     try {
       const { sessionKey, artist, track, love } = data;
@@ -509,7 +507,6 @@ export const initializeLastFmHandlers = () => {
 
       // Use backend or direct API based on environment
       if (useBackend) {
-        // Forward love/unlove request to backend
         const response = await forwardToBackend("track-action", "POST", {
           sessionKey,
           artist,
@@ -518,9 +515,8 @@ export const initializeLastFmHandlers = () => {
         });
 
         if (!response.success) {
-          logLastFm(`Error ${action} track:`, response.error);
+          logLastFm(`Error ${action} track`, response.error, "error");
         }
-
         return response;
       } else {
         // Call Last.fm API directly
@@ -545,7 +541,7 @@ export const initializeLastFmHandlers = () => {
         };
       }
     } catch (error) {
-      logLastFm("Error in loveTrack:", error);
+      logLastFm("Error in loveTrack", error, "error");
       return {
         success: false,
         error: `Internal error processing track love/unlove`,
@@ -553,8 +549,10 @@ export const initializeLastFmHandlers = () => {
     }
   });
 
-  logLastFm("Last.fm IPC handlers initialized");
-  logLastFm(
-    `Using ${useBackend ? "backend API" : "direct API calls"} for Last.fm`,
-  );
+  // Log initialization only in development
+  if (process.env.NODE_ENV !== "production") {
+    logLastFm(
+      `Using ${useBackend ? "backend API" : "direct API calls"} for Last.fm`,
+    );
+  }
 };

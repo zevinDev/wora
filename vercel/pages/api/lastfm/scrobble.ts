@@ -1,19 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextApiRequest, NextApiResponse } from "next";
 import { LASTFM_CONFIG } from "../config";
-import { generateSignature, createFormData } from "../utils/lastfm";
-
-type ScrobbleResponse = {
-  success: boolean;
-  message?: string;
-  error?: string;
-  scrobbles?: any; // Adjust the type of scrobbles based on the expected structure
-};
+import { createFormData, generateSignature } from "../utils/lastfm";
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<ScrobbleResponse>,
+  res: NextApiResponse,
 ) {
-  // Only allow POST requests
+  // This endpoint requires a POST request
   if (req.method !== "POST") {
     return res
       .status(405)
@@ -23,43 +16,41 @@ export default async function handler(
   try {
     const { sessionKey, artist, track, album, timestamp, duration } = req.body;
 
-    if (!sessionKey || !artist || !track || !timestamp) {
+    if (!sessionKey || !artist || !track) {
       return res.status(400).json({
         success: false,
-        error: "Session key, artist, track, and timestamp are required",
+        error: "Session key, artist, and track are required",
       });
     }
 
-    // Set up parameters for Last.fm scrobble request
+    // Build parameters for the API request
     const params: Record<string, string> = {
       method: "track.scrobble",
       artist,
       track,
-      timestamp,
-      sk: sessionKey,
+      timestamp: timestamp || Math.floor(Date.now() / 1000).toString(),
       api_key: LASTFM_CONFIG.API_KEY,
+      sk: sessionKey,
     };
 
-    // Add optional album parameter if provided
-    if (album) {
-      params.album = album;
-    }
+    // Add optional parameters if available
+    if (album) params.album = album;
+    if (duration) params.duration = duration.toString();
 
-    if (duration) {
-      params.duration = duration;
-    }
+    // Add signature for authenticated requests
+    params["api_sig"] = generateSignature(params);
+    params["format"] = "json";
 
-    // Add API signature for authenticated requests
-    params.api_sig = generateSignature(params);
-    params.format = "json";
+    // Create form data
+    const formData = createFormData(params);
 
-    // Make the request to Last.fm
+    // Make the request
     const response = await fetch(LASTFM_CONFIG.API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: createFormData(params).toString(),
+      body: formData.toString(),
     });
 
     const data = await response.json();
@@ -74,13 +65,12 @@ export default async function handler(
     // Return success response
     return res.status(200).json({
       success: true,
-      scrobbles: data.scrobbles,
     });
   } catch (error) {
     console.error("Last.fm scrobble error:", error);
     return res.status(500).json({
       success: false,
-      error: "An error occurred while scrobbling the track",
+      error: "An error occurred scrobbling the track",
     });
   }
 }

@@ -14,21 +14,133 @@ interface Song {
   duration?: number;
 }
 
+// Cache interface
+interface LastFmUserCache {
+  user: any;
+  username: string;
+  sessionKey: string;
+  timestamp: number;
+  expiry: number;
+}
+
 // Internal state
 let sessionKey: string | null = null;
 let username: string | null = null;
+const CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Simplified logging with log levels
+const logLastFm = (
+  message: string,
+  data?: any,
+  level: "info" | "error" | "warn" = "info",
+) => {
+  // Only log to console in development
+  const isDev = process.env.NODE_ENV !== "production";
+
+  // Format the message
+  const formattedMessage = `[Last.fm] ${message}`;
+
+  // Log to console in development
+  if (isDev) {
+    switch (level) {
+      case "error":
+        console.error(formattedMessage, data || "");
+        break;
+      case "warn":
+        console.warn(formattedMessage, data || "");
+        break;
+      default:
+        console.log(formattedMessage, data || "");
+    }
+  }
+
+  // Always send to main process for file logging in production
+  if (window.ipc && window.ipc.send) {
+    try {
+      window.ipc.send("lastfm:log", {
+        level,
+        message: data
+          ? `${formattedMessage}: ${typeof data === "object" ? JSON.stringify(data) : data}`
+          : formattedMessage,
+      });
+    } catch (err) {
+      // Only log failed IPC in development
+      if (isDev) console.error("Failed to send log to main process", err);
+    }
+  }
+};
+
+/**
+ * Store user info in cache
+ */
+const cacheUserInfo = (user: any): void => {
+  if (!username || !sessionKey || !user) return;
+
+  try {
+    const cacheData: LastFmUserCache = {
+      user,
+      username: username,
+      sessionKey: sessionKey,
+      timestamp: Date.now(),
+      expiry: Date.now() + CACHE_EXPIRY_MS,
+    };
+
+    localStorage.setItem("lastfm_user_cache", JSON.stringify(cacheData));
+    logLastFm("User info cached successfully");
+  } catch (error) {
+    // Silent fail - caching is non-critical
+    logLastFm("Failed to cache user info", error, "warn");
+  }
+};
+
+/**
+ * Get cached user info
+ */
+const getCachedUserInfo = (): any | null => {
+  try {
+    const cacheJson = localStorage.getItem("lastfm_user_cache");
+    if (!cacheJson) return null;
+
+    const cache: LastFmUserCache = JSON.parse(cacheJson);
+
+    // Check if cache is expired or belongs to a different user/session
+    if (
+      cache.expiry < Date.now() ||
+      cache.username !== username ||
+      cache.sessionKey !== sessionKey
+    ) {
+      localStorage.removeItem("lastfm_user_cache");
+      return null;
+    }
+
+    logLastFm("Using cached user info");
+    return cache.user;
+  } catch (error) {
+    // If any error occurs reading cache, ignore and return null
+    localStorage.removeItem("lastfm_user_cache");
+    return null;
+  }
+};
+
+/**
+ * Clear the user info cache
+ */
+const clearUserCache = (): void => {
+  try {
+    localStorage.removeItem("lastfm_user_cache");
+  } catch (error) {
+    // Silent fail
+  }
+};
 
 /**
  * Initialize Last.fm with username and password
- * This sends the credentials through the IPC channel to the backend API
  */
 export const initializeLastFM = async (
   lastfmUsername: string,
   password: string,
 ): Promise<boolean> => {
   try {
-    console.log(`[Last.fm] Initializing Last.fm for ${lastfmUsername}`);
-
     const response = await window.ipc.invoke(
       "lastfm:authenticate",
       lastfmUsername,
@@ -38,14 +150,14 @@ export const initializeLastFM = async (
     if (response.success && response.session) {
       sessionKey = response.session.key;
       username = response.session.name;
-      console.log(`[Last.fm] Initialized successfully for ${username}`);
+      logLastFm(`Authentication successful`);
       return true;
     } else {
-      console.error("[Last.fm] Authentication failed:", response.error);
+      logLastFm("Authentication failed", response.error, "error");
       return false;
     }
   } catch (error) {
-    console.error("[Last.fm] Error initializing:", error);
+    logLastFm("Error initializing", error, "error");
     return false;
   }
 };
@@ -59,7 +171,6 @@ export const initializeLastFMWithSession = (
 ): void => {
   sessionKey = key;
   username = user;
-  console.log(`[Last.fm] Initialized with session for ${username}`);
 };
 
 /**
@@ -82,7 +193,7 @@ export const getSessionKey = (): string | null => {
 export const logout = (): void => {
   sessionKey = null;
   username = null;
-  console.log("[Last.fm] Logged out");
+  clearUserCache();
 };
 
 /**
@@ -90,14 +201,10 @@ export const logout = (): void => {
  */
 export const updateNowPlaying = async (song: Song): Promise<boolean> => {
   if (!sessionKey) {
-    console.warn("[Last.fm] Not authenticated, cannot update now playing");
     return false;
   }
 
   try {
-    console.log(
-      `[Last.fm] Updating now playing: ${song.artist} - ${song.name}`,
-    );
     const response = await window.ipc.invoke("lastfm:updateNowPlaying", {
       sessionKey,
       artist: song.artist,
@@ -108,15 +215,12 @@ export const updateNowPlaying = async (song: Song): Promise<boolean> => {
         : undefined,
     });
 
-    if (response.success) {
-      console.log("[Last.fm] Now playing updated successfully");
-      return true;
-    } else {
-      console.error("[Last.fm] Failed to update now playing:", response.error);
-      return false;
+    if (!response.success) {
+      logLastFm("Failed to update now playing", response.error, "warn");
     }
+    return response.success;
   } catch (error) {
-    console.error("[Last.fm] Error updating now playing:", error);
+    logLastFm("Error updating now playing", error, "error");
     return false;
   }
 };
@@ -126,12 +230,10 @@ export const updateNowPlaying = async (song: Song): Promise<boolean> => {
  */
 export const scrobbleTrack = async (song: Song): Promise<boolean> => {
   if (!sessionKey) {
-    console.warn("[Last.fm] Not authenticated, cannot scrobble");
     return false;
   }
 
   try {
-    console.log(`[Last.fm] Scrobbling track: ${song.artist} - ${song.name}`);
     const response = await window.ipc.invoke("lastfm:scrobbleTrack", {
       sessionKey,
       artist: song.artist,
@@ -143,15 +245,12 @@ export const scrobbleTrack = async (song: Song): Promise<boolean> => {
         : undefined,
     });
 
-    if (response.success) {
-      console.log("[Last.fm] Track scrobbled successfully");
-      return true;
-    } else {
-      console.error("[Last.fm] Failed to scrobble track:", response.error);
-      return false;
+    if (!response.success) {
+      logLastFm("Failed to scrobble track", response.error, "warn");
     }
+    return response.success;
   } catch (error) {
-    console.error("[Last.fm] Error scrobbling track:", error);
+    logLastFm("Error scrobbling track", error, "error");
     return false;
   }
 };
@@ -161,12 +260,17 @@ export const scrobbleTrack = async (song: Song): Promise<boolean> => {
  */
 export const getUserInfo = async (): Promise<any> => {
   if (!username || !sessionKey) {
-    console.warn("[Last.fm] Not authenticated, cannot get user info");
     return null;
   }
 
+  // First, try to get user info from cache
+  const cachedUserInfo = getCachedUserInfo();
+  if (cachedUserInfo) {
+    return cachedUserInfo;
+  }
+
+  // If cache miss or expired, fetch from API
   try {
-    console.log(`[Last.fm] Getting user info for ${username}`);
     const response = await window.ipc.invoke(
       "lastfm:getUserInfo",
       username,
@@ -174,13 +278,15 @@ export const getUserInfo = async (): Promise<any> => {
     );
 
     if (response.success) {
+      // Cache the successful response for future use
+      cacheUserInfo(response.user);
       return response.user;
     } else {
-      console.error("[Last.fm] Failed to get user info:", response.error);
+      logLastFm("Failed to get user info", response.error, "warn");
       return null;
     }
   } catch (error) {
-    console.error("[Last.fm] Error getting user info:", error);
+    logLastFm("Error getting user info", error, "error");
     return null;
   }
 };
@@ -202,12 +308,10 @@ export const getTrackInfo = async (
 
     if (response.success) {
       return response.track;
-    } else {
-      console.error("[Last.fm] Failed to get track info:", response.error);
-      return null;
     }
+    return null;
   } catch (error) {
-    console.error("[Last.fm] Error getting track info:", error);
+    logLastFm("Error getting track info", error, "error");
     return null;
   }
 };
@@ -219,10 +323,7 @@ export const loveTrack = async (
   artist: string,
   track: string,
 ): Promise<boolean> => {
-  if (!sessionKey) {
-    console.warn("[Last.fm] Not authenticated, cannot love track");
-    return false;
-  }
+  if (!sessionKey) return false;
 
   try {
     const response = await window.ipc.invoke("lastfm:loveTrack", {
@@ -234,7 +335,7 @@ export const loveTrack = async (
 
     return response.success;
   } catch (error) {
-    console.error("[Last.fm] Error loving track:", error);
+    logLastFm("Error loving track", error, "error");
     return false;
   }
 };
@@ -246,10 +347,7 @@ export const unloveTrack = async (
   artist: string,
   track: string,
 ): Promise<boolean> => {
-  if (!sessionKey) {
-    console.warn("[Last.fm] Not authenticated, cannot unlove track");
-    return false;
-  }
+  if (!sessionKey) return false;
 
   try {
     const response = await window.ipc.invoke("lastfm:loveTrack", {
@@ -261,7 +359,7 @@ export const unloveTrack = async (
 
     return response.success;
   } catch (error) {
-    console.error("[Last.fm] Error unloving track:", error);
+    logLastFm("Error unloving track", error, "error");
     return false;
   }
 };
@@ -277,7 +375,7 @@ export const isTrackLoved = async (
     const trackInfo = await getTrackInfo(artist, track);
     return trackInfo && trackInfo.userloved === "1";
   } catch (error) {
-    console.error("[Last.fm] Error checking if track is loved:", error);
+    logLastFm("Error checking if track is loved", error, "error");
     return false;
   }
 };
