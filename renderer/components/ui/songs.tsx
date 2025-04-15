@@ -82,14 +82,7 @@ const SongItem = memo(
               <div className="relative h-12 w-12 overflow-hidden rounded-lg shadow-lg transition duration-300">
                 <Image
                   alt={song.album.name}
-                  src={
-                    song.album.cover
-                      ? song.album.cover.startsWith("/") ||
-                        song.album.cover.includes("://")
-                        ? `${song.album.cover}`
-                        : `wora://${song.album.cover}`
-                      : "/coverArt.png"
-                  }
+                  src={`wora://${song.album.cover}`}
                   fill
                   loading="lazy"
                   className="object-cover"
