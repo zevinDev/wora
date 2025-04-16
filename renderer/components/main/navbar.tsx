@@ -148,8 +148,7 @@ const Navbar = () => {
           window.ipc.send("resetHomePageState", null);
         }
 
-        // Re-route to refresh the page components
-        router.replace(router.asPath);
+        // Removed router.replace(router.asPath) to allow smooth transitions
       }
     },
     [router],
@@ -370,7 +369,7 @@ const Navbar = () => {
               </CommandGroup>
             ) : (
               <div className="flex h-[325px] w-full items-center justify-center text-xs">
-                <div className="ml-2 rounded-lg bg-black/5 px-1.5 py-1 shadow-sm dark:bg-white/10">
+                <div className="dark:bg.white/10 ml-2 rounded-lg bg-black/5 px-1.5 py-1 shadow-sm">
                   ⌘ / Ctrl + F
                 </div>
               </div>

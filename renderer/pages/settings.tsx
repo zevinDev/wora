@@ -53,7 +53,7 @@ const lastFmFormSchema = z.object({
 
 const lastFmSettingsSchema = z.object({
   enableLastFm: z.boolean().default(false),
-  scrobbleThreshold: z.number().min(1).max(100).default(50),
+  scrobbleThreshold: z.number().min(50).max(100).default(50),
 });
 
 type Settings = {
@@ -666,7 +666,7 @@ export default function Settings() {
                             <FormControl>
                               <Slider
                                 value={[field.value]}
-                                min={1}
+                                min={50}
                                 max={100}
                                 step={1}
                                 onValueChange={(vals) =>
